@@ -1,17 +1,17 @@
 {
-    "name": ":vendor_slug/:package_slug",
-    "description": ":package_description",
+    "name": "atannex/foundation",
+    "description": "Foundation package for Atannex",
     "keywords": [
-        ":vendor_name",
+        "atannex",
         "laravel",
-        ":package_slug"
+        "foundation"
     ],
-    "homepage": "https://github.com/:vendor_slug/:package_slug",
+    "homepage": "https://github.com/atannex/foundation",
     "license": "MIT",
     "authors": [
         {
-            "name": ":author_name",
-            "email": "author@domain.com",
+            "name": "Atangageih Leke Collins",
+            "email": "lekeatenga@gmail.com",
             "role": "Developer"
         }
     ],
@@ -35,13 +35,12 @@
     },
     "autoload": {
         "psr-4": {
-            "VendorName\\Skeleton\\": "src/",
-            "VendorName\\Skeleton\\Database\\Factories\\": "database/factories/"
+            "Atannex\\Foundation\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "VendorName\\Skeleton\\Tests\\": "tests/",
+            "Atannex\\Foundation\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/"
         }
     },
@@ -63,10 +62,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "VendorName\\Skeleton\\SkeletonServiceProvider"
+                "Atannex\\Foundation\\FoundationServiceProvider"
             ],
             "aliases": {
-                "Skeleton": "VendorName\\Skeleton\\Facades\\Skeleton"
+                "Foundation": "Atannex\\Foundation\\Facades\\Foundation"
             }
         }
     },
