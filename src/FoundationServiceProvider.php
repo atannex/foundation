@@ -2,9 +2,9 @@
 
 namespace Atannex\Foundation;
 
+use Atannex\Foundation\Commands\FoundationCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
-use Atannex\Foundation\Commands\FoundationCommand;
 
 class FoundationServiceProvider extends PackageServiceProvider
 {

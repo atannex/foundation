@@ -2,9 +2,9 @@
 
 namespace Atannex\Foundation\Tests;
 
+use Atannex\Foundation\FoundationServiceProvider;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Orchestra\Testbench\TestCase as Orchestra;
-use Atannex\Foundation\FoundationServiceProvider;
 
 class TestCase extends Orchestra
 {
