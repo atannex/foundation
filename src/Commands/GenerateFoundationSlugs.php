@@ -8,14 +8,18 @@ use Atannex\Foundation\Concerns\CanGenerateSlug;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\File;
+use Throwable;
 
 class GenerateFoundationSlugs extends Command
 {
     protected $signature = 'generate:atannex-slug
-                            {model? : Fully qualified model class}
+                            {model?* : Fully qualified model class(es)}
                             {--force : Regenerate slugs even if they already exist}';
 
-    protected $description = 'Generate or regenerate slugs for any model using CanGenerateSlug trait.';
+    protected $description = 'Generate or regenerate slugs for models using CanGenerateSlug trait.';
+
+    /** @var array<class-string<Model>> */
+    protected array $cachedModels = [];
 
     public function handle(): int
     {
@@ -23,7 +27,6 @@ class GenerateFoundationSlugs extends Command
 
         if (empty($models)) {
             $this->warn('No models found using CanGenerateSlug trait.');
-
             return self::SUCCESS;
         }
 
@@ -31,7 +34,8 @@ class GenerateFoundationSlugs extends Command
             $this->processModel($modelClass);
         }
 
-        $this->info("\n✅ Slug generation completed.");
+        $this->newLine();
+        $this->info('✅ Slug generation completed.');
 
         return self::SUCCESS;
     }
@@ -44,25 +48,55 @@ class GenerateFoundationSlugs extends Command
 
     protected function resolveModels(): array
     {
-        // If a specific model is passed → use only that
-        if ($input = $this->argument('model')) {
-            return [$input];
+        $inputModels = (array) $this->argument('model');
+
+        if (! empty($inputModels)) {
+            return collect($inputModels)
+                ->filter(fn($class) => $this->isValidModel($class))
+                ->values()
+                ->all();
         }
 
-        // Otherwise auto-discover models using the trait
         return $this->discoverModelsUsingTrait();
+    }
+
+    protected function isValidModel(string $class): bool
+    {
+        if (! class_exists($class)) {
+            $this->error("Invalid model: {$class}");
+            return false;
+        }
+
+        if (! is_subclass_of($class, Model::class)) {
+            $this->error("Not an Eloquent model: {$class}");
+            return false;
+        }
+
+        if (! $this->usesSlugTrait($class)) {
+            $this->warn("Skipped (missing CanGenerateSlug): {$class}");
+            return false;
+        }
+
+        return true;
     }
 
     protected function discoverModelsUsingTrait(): array
     {
-        $models = [];
+        if (! empty($this->cachedModels)) {
+            return $this->cachedModels;
+        }
 
+        $models = [];
         $modelPath = app_path('Models');
+
+        if (! is_dir($modelPath)) {
+            return [];
+        }
 
         foreach (File::allFiles($modelPath) as $file) {
             $class = $this->getClassFromFile($file->getPathname());
 
-            if (! class_exists($class)) {
+            if (! $class || ! class_exists($class)) {
                 continue;
             }
 
@@ -75,30 +109,27 @@ class GenerateFoundationSlugs extends Command
             }
         }
 
-        return $models;
+        return $this->cachedModels = $models;
     }
 
     protected function usesSlugTrait(string $class): bool
     {
-        $traits = class_uses_recursive($class);
-
         return in_array(
             CanGenerateSlug::class,
-            $traits,
+            class_uses_recursive($class),
             true
         );
     }
 
     protected function getClassFromFile(string $path): ?string
     {
-        $relative = str_replace(app_path().DIRECTORY_SEPARATOR, '', $path);
-        $class = 'App\\'.str_replace(
+        $relative = str_replace(app_path() . DIRECTORY_SEPARATOR, '', $path);
+
+        return 'App\\' . str_replace(
             [DIRECTORY_SEPARATOR, '.php'],
             ['\\', ''],
             $relative
         );
-
-        return $class;
     }
 
     /*
@@ -109,49 +140,49 @@ class GenerateFoundationSlugs extends Command
 
     protected function processModel(string $modelClass): void
     {
-        $this->info("\n🔄 Processing: {$modelClass}");
+        $this->newLine();
+        $this->info("🔄 Processing: {$modelClass}");
 
-        /** @var Model $instance */
+        /** @var Model&CanGenerateSlug $instance */
         $instance = new $modelClass;
 
         if (! method_exists($instance, 'ensureSlug')) {
             $this->warn('Skipped (no ensureSlug method).');
-
             return;
         }
 
-        $query = $modelClass::query();
-
-        // Include soft deleted if supported
-        if (method_exists($modelClass, 'withTrashed')) {
-            $query = $modelClass::withTrashed();
-        }
+        $query = method_exists($modelClass, 'withTrashed')
+            ? $modelClass::withTrashed()
+            : $modelClass::query();
 
         $processed = 0;
 
-        $query->chunkById(200, function ($records) use (&$processed) {
-            foreach ($records as $model) {
+        foreach ($query->lazyById(200) as $model) {
 
-                if (! $this->option('force') && ! empty($model->{$model->getSlugColumn()})) {
-                    continue;
-                }
+            $slugColumn = $model->getSlugColumn();
 
-                try {
-                    $model->ensureSlug();
-                    $model->save();
-
-                    $processed++;
-                } catch (\Throwable $e) {
-                    $this->error(
-                        sprintf(
-                            'Failed for ID %s: %s',
-                            $model->getKey(),
-                            $e->getMessage()
-                        )
-                    );
-                }
+            if (! $this->option('force') && ! empty($model->{$slugColumn})) {
+                continue;
             }
-        });
+
+            try {
+                $model->ensureSlug();
+
+                if ($model->isDirty($slugColumn)) {
+                    $model->save();
+                    $processed++;
+                }
+            } catch (Throwable $e) {
+                $this->error(
+                    sprintf(
+                        '[%s] ID %s failed: %s',
+                        class_basename($modelClass),
+                        $model->getKey(),
+                        $e->getMessage()
+                    )
+                );
+            }
+        }
 
         $this->line("✔ {$processed} records updated.");
     }
