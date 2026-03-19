@@ -23,6 +23,7 @@ class GenerateFoundationSlugs extends Command
 
         if (empty($models)) {
             $this->warn('No models found using CanGenerateSlug trait.');
+
             return self::SUCCESS;
         }
 
@@ -90,8 +91,8 @@ class GenerateFoundationSlugs extends Command
 
     protected function getClassFromFile(string $path): ?string
     {
-        $relative = str_replace(app_path() . DIRECTORY_SEPARATOR, '', $path);
-        $class = 'App\\' . str_replace(
+        $relative = str_replace(app_path().DIRECTORY_SEPARATOR, '', $path);
+        $class = 'App\\'.str_replace(
             [DIRECTORY_SEPARATOR, '.php'],
             ['\\', ''],
             $relative
@@ -114,7 +115,8 @@ class GenerateFoundationSlugs extends Command
         $instance = new $modelClass;
 
         if (! method_exists($instance, 'ensureSlug')) {
-            $this->warn("Skipped (no ensureSlug method).");
+            $this->warn('Skipped (no ensureSlug method).');
+
             return;
         }
 
