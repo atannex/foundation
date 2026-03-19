@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\File;
 
 class GenerateFoundationSlugs extends Command
 {
-    protected $signature = 'atannex:generate-slug
+    protected $signature = 'generate:atannex-slug
                             {model? : Fully qualified model class}
                             {--force : Regenerate slugs even if they already exist}';
 
