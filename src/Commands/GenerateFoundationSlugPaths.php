@@ -19,6 +19,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found using CanGenerateSlugPath trait.');
+
             return;
         }
 
@@ -107,7 +108,7 @@ class GenerateFoundationSlugPaths extends Command
 
         /** @var Model $modelClass */
         $modelClass::query()
-            ->chunkById(100, function ($items) use ($modelClass) {
+            ->chunkById(100, function ($items) {
                 foreach ($items as $model) {
                     $this->syncModelSlugPath($model);
                 }
