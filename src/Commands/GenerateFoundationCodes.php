@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Atannex\Foundation\Commands;
 
+use Atannex\Foundation\Concerns\CanGenerateCode;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -33,11 +34,13 @@ class GenerateFoundationCodes extends Command
             $models = $this->resolveTargetModels();
         } catch (Throwable $e) {
             $this->error($e->getMessage());
+
             return self::FAILURE;
         }
 
         if ($models->isEmpty()) {
             $this->warn('No valid models found.');
+
             return self::FAILURE;
         }
 
@@ -56,11 +59,12 @@ class GenerateFoundationCodes extends Command
         $failures = collect();
 
         foreach ($models as $modelClass) {
-            /** @var Model&\Atannex\Foundation\Concerns\CanGenerateCode $model */
+            /** @var Model&CanGenerateCode $model */
             $model = new $modelClass;
 
             if (! method_exists($model, 'resolveCodeColumn')) {
                 $this->warn("Skipping {$modelClass} (invalid trait)");
+
                 continue;
             }
 
@@ -68,6 +72,7 @@ class GenerateFoundationCodes extends Command
 
             if (! $this->columnExists($model, $codeColumn)) {
                 $this->warn("Skipping {$modelClass} (missing column: {$codeColumn})");
+
                 continue;
             }
 
@@ -87,6 +92,7 @@ class GenerateFoundationCodes extends Command
 
             if ($count === 0) {
                 $this->line("No records for {$modelClass}");
+
                 continue;
             }
 
@@ -200,7 +206,7 @@ class GenerateFoundationCodes extends Command
         }
 
         return collect($this->discoverModels(app_path('Models')))
-            ->filter(fn($c) => $this->usesTrait($c))
+            ->filter(fn ($c) => $this->usesTrait($c))
             ->values();
     }
 
@@ -211,9 +217,9 @@ class GenerateFoundationCodes extends Command
         }
 
         return collect(scandir($path))
-            ->filter(fn($f) => str_ends_with($f, '.php'))
-            ->map(fn($f) => 'App\\Models\\' . Str::replaceLast('.php', '', $f))
-            ->filter(fn($c) => class_exists($c))
+            ->filter(fn ($f) => str_ends_with($f, '.php'))
+            ->map(fn ($f) => 'App\\Models\\'.Str::replaceLast('.php', '', $f))
+            ->filter(fn ($c) => class_exists($c))
             ->values()
             ->all();
     }
@@ -221,7 +227,7 @@ class GenerateFoundationCodes extends Command
     protected function usesTrait(string $class): bool
     {
         return in_array(
-            \Atannex\Foundation\Concerns\CanGenerateCode::class,
+            CanGenerateCode::class,
             class_uses_recursive($class),
             true
         );
