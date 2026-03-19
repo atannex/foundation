@@ -3,6 +3,7 @@
 namespace Atannex\Foundation;
 
 use Atannex\Foundation\Commands\GenerateFoundationCodes;
+use Atannex\Foundation\Commands\GenerateFoundationSlugs;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -13,7 +14,10 @@ class FoundationServiceProvider extends PackageServiceProvider
         $package
             ->name('atannex-foundation')
             ->hasConfigFile('foundation')
-            ->hasCommand(GenerateFoundationCodes::class);
+            ->hasCommands([
+                GenerateFoundationCodes::class,
+                GenerateFoundationSlugs::class
+            ]);
     }
 
     public function packageRegistered(): void
@@ -24,8 +28,8 @@ class FoundationServiceProvider extends PackageServiceProvider
 
         $this->app->alias(FoundationManager::class, 'atannex');
 
-        if (file_exists(__DIR__.'/../helpers.php')) {
-            require_once __DIR__.'/../helpers.php';
+        if (file_exists(__DIR__ . '/../helpers.php')) {
+            require_once __DIR__ . '/../helpers.php';
         }
     }
 }
