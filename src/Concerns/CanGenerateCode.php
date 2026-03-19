@@ -10,159 +10,247 @@ use Illuminate\Support\Str;
 use RuntimeException;
 
 /**
- * Adds automatic unique code generation capability to Eloquent models.
+ * Trait CanGenerateCode
  *
- * The generated code follows the pattern: PREFIX + YEAR + ABBREVIATION + RANDOM_DIGITS
+ * Provides deterministic, unique, and extensible code generation for Eloquent models.
  *
- * Override any of the protected methods in your model to customize behavior.
+ * Pattern:
+ *   PREFIX + YEAR + ABBR + RANDOM
+ *
+ * Example:
+ *   ATA25PR1234
+ *
+ * Design Goals:
+ * - Deterministic structure
+ * - High cohesion, low coupling
+ * - Extensible override points
+ * - Strict encapsulation
  */
 trait CanGenerateCode
 {
     /**
-     * Register model event listeners.
+     * Boot the trait.
      */
     protected static function bootCanGenerateCode(): void
     {
         static::creating(static function (Model $model): void {
-            $model->applyGeneratedCode();
+            $model->initializeGeneratedCode();
         });
     }
 
-    protected function getCodeColumn(): string
+    /**
+     * Entry point for code generation.
+     *
+     * @internal Called during model lifecycle.
+     */
+    protected function initializeGeneratedCode(): void
+    {
+        $column = $this->codeColumn();
+
+        if ($this->hasPredefinedCode($column)) {
+            return;
+        }
+
+        $abbreviation = $this->buildAbbreviation(
+            (string) $this->getAttribute($this->sourceColumn())
+        );
+
+        $this->setAttribute(
+            $column,
+            $this->resolveUniqueCode($abbreviation)
+        );
+    }
+
+    /* -----------------------------------------------------------------
+     |  Configuration (Override Points)
+     | -----------------------------------------------------------------
+     */
+
+    protected function codeColumn(): string
     {
         return $this->codeColumn ?? 'code';
     }
 
-    protected function getCodeSourceColumn(): string
+    protected function sourceColumn(): string
     {
         return $this->codeSourceColumn ?? 'name';
     }
 
-    protected function getCodePrefix(): string
+    protected function codePrefix(): string
     {
         return $this->codePrefix ?? 'ATA';
     }
 
-    protected function getCodeYearFormat(): string
+    protected function yearFormat(): string
     {
-        return $this->codeYearFormat ?? 'y'; // 'y' → 25, 'Y' → 2025, 'ym' → 2503, etc.
+        return $this->codeYearFormat ?? 'y';
     }
 
-    protected function getCodeAbbreviationLength(): int
+    protected function abbreviationLength(): int
     {
         return $this->codeAbbreviationLength ?? 2;
     }
 
-    protected function getCodeRandomDigits(): int
+    protected function randomLength(): int
     {
         return $this->codeRandomLength ?? 4;
     }
 
-    protected function getMaxGenerationAttempts(): int
+    protected function maxAttempts(): int
     {
         return $this->codeMaxAttempts ?? 12;
     }
 
     /**
-     * Allows customizing the query used to check for code uniqueness.
-     * Useful when you need to scope uniqueness (e.g. per tenant, per user, etc.)
+     * Override to scope uniqueness (multi-tenant, etc.)
      */
-    protected function getUniquenessQuery(): Builder
+    protected function uniquenessQuery(): Builder
     {
         return $this->newQuery();
     }
 
-    protected function applyGeneratedCode(): void
-    {
-        $column = $this->getCodeColumn();
+    /* -----------------------------------------------------------------
+     |  Core Generation Logic
+     | -----------------------------------------------------------------
+     */
 
-        // Skip if code is already set (manual assignment or database default)
-        if (! empty($this->getAttribute($column))) {
-            return;
+    /**
+     * Generate a unique code with retry strategy.
+     */
+    final protected function resolveUniqueCode(string $abbreviation): string
+    {
+        $context = $this->buildContext($abbreviation);
+
+        for ($attempt = 1; $attempt <= $context['maxAttempts']; $attempt++) {
+            $candidate = $this->composeCode($context);
+
+            if (! $this->codeExists($candidate)) {
+                return $candidate;
+            }
         }
 
-        $sourceColumn = $this->getCodeSourceColumn();
-        $sourceValue = $this->getAttribute($sourceColumn) ?? '';
+        throw $this->buildGenerationException($context);
+    }
 
-        $abbreviation = $this->createAbbreviation($sourceValue);
+    /**
+     * Build immutable generation context.
+     */
+    private function buildContext(string $abbreviation): array
+    {
+        return [
+            'prefix'      => $this->codePrefix(),
+            'year'        => now()->format($this->yearFormat()),
+            'abbr'        => $this->normalizeAbbreviation($abbreviation),
+            'randomLen'   => $this->randomLength(),
+            'maxAttempts' => $this->maxAttempts(),
+        ];
+    }
 
-        $this->setAttribute(
-            $column,
-            $this->generateUniqueCode($abbreviation)
+    /**
+     * Compose final code string.
+     */
+    private function composeCode(array $context): string
+    {
+        return $context['prefix']
+            . $context['year']
+            . $context['abbr']
+            . $this->generateRandomDigits($context['randomLen']);
+    }
+
+    /**
+     * Check if code already exists.
+     */
+    private function codeExists(string $code): bool
+    {
+        return $this->uniquenessQuery()
+            ->where($this->codeColumn(), $code)
+            ->exists();
+    }
+
+    /* -----------------------------------------------------------------
+     |  Abbreviation Pipeline
+     | -----------------------------------------------------------------
+     */
+
+    /**
+     * Create abbreviation from source string.
+     */
+    protected function buildAbbreviation(string $value): string
+    {
+        $value = $this->sanitizeText($value);
+
+        $letters = collect(preg_split('/\s+/', $value))
+            ->filter()
+            ->map(fn(string $word) => Str::upper(Str::substr($word, 0, 1)));
+
+        return $letters
+            ->take($this->abbreviationLength())
+            ->implode('');
+    }
+
+    /**
+     * Normalize abbreviation length & casing.
+     */
+    protected function normalizeAbbreviation(string $abbr): string
+    {
+        return Str::upper(
+            Str::substr($abbr, 0, $this->abbreviationLength())
         );
     }
 
     /**
-     * @throws RuntimeException if a unique code cannot be generated after max attempts
+     * Remove unwanted characters.
      */
-    protected function generateUniqueCode(string $abbreviation): string
+    private function sanitizeText(string $value): string
     {
-        $prefix = $this->getCodePrefix();
-        $year = now()->format($this->getCodeYearFormat());
-        $abbr = $this->normalizeAbbreviation($abbreviation);
-        $randomLen = $this->getCodeRandomDigits();
-        $maxAttempts = $this->getMaxGenerationAttempts();
-
-        $attempt = 0;
-
-        do {
-            $randomPart = $this->generateRandomNumericString($randomLen);
-            $candidate = $prefix.$year.$abbr.$randomPart;
-
-            $exists = $this->getUniquenessQuery()
-                ->where($this->getCodeColumn(), $candidate)
-                ->exists();
-
-            if (! $exists) {
-                return $candidate;
-            }
-
-            $attempt++;
-        } while ($attempt < $maxAttempts);
-
-        throw new RuntimeException(sprintf(
-            'Failed to generate unique code for %s after %d attempts. '.
-                'Prefix: %s | Year: %s | Abbr: %s | Digits: %d',
-            static::class,
-            $maxAttempts,
-            $prefix,
-            $year,
-            $abbr,
-            $randomLen
-        ));
+        return trim(
+            preg_replace('/[^A-Za-z0-9\s]/', '', $value) ?? ''
+        );
     }
+
+    /* -----------------------------------------------------------------
+     |  Random Generation
+     | -----------------------------------------------------------------
+     */
 
     /**
-     * Creates a short uppercase abbreviation from the source text (usually 2–3 letters)
+     * Generate fixed-length numeric string.
      */
-    protected function createAbbreviation(string $text): string
-    {
-        $cleaned = preg_replace('/[^A-Za-z0-9\s]/', '', $text);
-        $words = collect(explode(' ', trim($cleaned)))
-            ->filter()
-            ->map(static fn (string $word): string => Str::upper(Str::substr($word, 0, 1)));
-
-        return $words->take($this->getCodeAbbreviationLength())->implode('');
-    }
-
-    protected function normalizeAbbreviation(string $abbr): string
-    {
-        return Str::upper(Str::substr($abbr, 0, $this->getCodeAbbreviationLength()));
-    }
-
-    /**
-     * Generates a zero-padded random numeric string of exact length
-     * (e.g. length=4 → "0073" .. "9841", never starts with 0 unless length=1)
-     */
-    protected function generateRandomNumericString(int $length): string
+    private function generateRandomDigits(int $length): string
     {
         if ($length <= 0) {
             return '';
         }
 
-        $min = (int) ('1'.str_repeat('0', $length - 1));
+        $min = (int) ('1' . str_repeat('0', $length - 1));
         $max = (int) str_repeat('9', $length);
 
-        return sprintf("%0{$length}d", random_int($min, $max));
+        return (string) random_int($min, $max);
+    }
+
+    /* -----------------------------------------------------------------
+     |  Guards & Validation
+     | -----------------------------------------------------------------
+     */
+
+    /**
+     * Determine if code already exists on model.
+     */
+    private function hasPredefinedCode(string $column): bool
+    {
+        return ! empty($this->getAttribute($column));
+    }
+
+    /**
+     * Build detailed exception.
+     */
+    private function buildGenerationException(array $context): RuntimeException
+    {
+        return new RuntimeException(sprintf(
+            'Code generation failed for [%s] after %d attempts. Context: %s',
+            static::class,
+            $context['maxAttempts'],
+            json_encode($context, JSON_THROW_ON_ERROR)
+        ));
     }
 }

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Atannex\Foundation\Commands;
 
 use Illuminate\Console\Command;
@@ -10,94 +12,85 @@ use Throwable;
 class GenerateFoundationCodes extends Command
 {
     protected $signature = 'atannex:generate-code
-        {model : Model name or full class (Department, App\Models\User, App\Models\Regions\Department, ...)}
-        {--column=code           : The column that stores the code}
-        {--force                 : Regenerate codes even when they already exist}
-        {--dry-run               : Show what would be done without saving anything}
-        {--chunk=150             : Number of records to process per chunk}
-        {--memory-limit=512M     : PHP memory limit for this command}';
+        {model : Model class or alias}
+        {--column= : Override code column (optional)}
+        {--force : Regenerate codes even if they exist}
+        {--dry-run : Simulate execution without saving}
+        {--chunk=150 : Number of records per batch}
+        {--memory-limit=512M : Memory limit}';
 
-    protected $description = 'Generate missing (or force-regenerate) codes for any model that uses CanGenerateCode trait';
+    protected $description = 'Generate codes for models using CanGenerateCode trait (enterprise-safe, no reflection)';
 
     public function handle(): int
     {
-        $this->setMemoryLimit($this->option('memory-limit'));
+        $this->configureMemory();
 
-        $modelInput = $this->argument('model');
-        $modelClass = $this->resolveModelClass($modelInput);
+        $modelClass = $this->resolveModelClass($this->argument('model'));
 
         if (! class_exists($modelClass)) {
-            $this->error("Model class not found: <comment>{$modelClass}</comment>");
-
-            return self::FAILURE;
+            return $this->failCommand("Model not found: {$modelClass}");
         }
 
-        if (! in_array('Atannex\Foundation\Concerns\CanGenerateCode', class_uses_recursive($modelClass), true)) {
-            $this->error("Model <comment>{$modelClass}</comment> does not use the CanGenerateCode trait.");
-
-            return self::FAILURE;
+        if (! $this->usesCodeGeneration($modelClass)) {
+            return $this->failCommand("Model {$modelClass} must use CanGenerateCode trait.");
         }
 
         /** @var Model $model */
         $model = new $modelClass;
-        $codeColumn = $this->option('column');
 
-        // Make sure the column actually exists on the model/table
-        if (! $model->getConnection()->getSchemaBuilder()->hasColumn($model->getTable(), $codeColumn)) {
-            $this->error("Column <comment>{$codeColumn}</comment> does not exist on table <comment>{$model->getTable()}</comment>");
+        $column = $this->resolveCodeColumn($model);
 
-            return self::FAILURE;
+        if (! $this->columnExists($model, $column)) {
+            return $this->failCommand("Column {$column} does not exist on table {$model->getTable()}");
         }
 
-        $dryRun = $this->option('dry-run');
-        $force = $this->option('force');
+        $query = $this->buildQuery($modelClass, $column);
 
-        $query = $modelClass::query()
-            ->when(! $force, fn ($q) => $q->whereNull($codeColumn));
+        $total = $query->count();
 
-        $totalToProcess = $query->count();
-
-        if ($totalToProcess === 0) {
-            $this->info('No records need code generation.');
-
+        if ($total === 0) {
+            $this->info('No records to process.');
             return self::SUCCESS;
         }
 
-        $this->newLine();
-        $this->info("Found <fg=yellow>{$totalToProcess}</> records to process in model <comment>{$modelClass}</comment>");
-        $this->line("  • Column:       <comment>{$codeColumn}</comment>");
-        $this->line('  • Force mode:   '.($force ? '<fg=red>YES</>' : 'no'));
-        $this->line('  • Dry-run:      '.($dryRun ? '<fg=yellow>YES (no changes will be saved)</>' : 'no'));
-        $this->newLine();
+        $this->renderSummary($modelClass, $column, $total);
 
-        if (! $this->confirm('Continue?', true)) {
+        if (! $this->confirm('Proceed?', true)) {
             $this->info('Command cancelled.');
-
             return self::SUCCESS;
         }
 
-        $bar = $this->output->createProgressBar($totalToProcess);
+        return $this->process($query, $column);
+    }
+
+    /* -----------------------------------------------------------------
+     |  Processing Pipeline
+     | -----------------------------------------------------------------
+     */
+
+    protected function process($query, string $column): int
+    {
+        $bar = $this->output->createProgressBar($query->count());
         $bar->start();
 
-        $successCount = 0;
+        $success = 0;
         $failures = collect();
 
-        $query->chunk($this->option('chunk'), function (Collection $items) use (
-            $dryRun,
-            $bar,
-            &$successCount,
-            $failures
+        $query->chunk((int) $this->option('chunk'), function (Collection $records) use (
+            $column,
+            &$success,
+            $failures,
+            $bar
         ) {
-            foreach ($items as $record) {
+            foreach ($records as $record) {
                 try {
-                    // The trait method — generates code only if missing
-                    $record->applyGeneratedCode();
+                    $this->processRecord($record);
 
-                    if (! $dryRun) {
-                        $record->saveQuietly(); // skip events / observers if possible
+                    if (! $this->option('dry-run')) {
+                        $record->saveQuietly();
                     }
 
-                    $successCount++;
+                    $success++;
                 } catch (Throwable $e) {
                     $failures->push([
                         'id' => $record->getKey(),
@@ -112,63 +105,140 @@ class GenerateFoundationCodes extends Command
         $bar->finish();
         $this->newLine(2);
 
-        $this->info("Successfully processed: <fg=green>{$successCount}</> records");
+        return $this->renderResults($success, $failures);
+    }
+
+    protected function processRecord(Model $record): void
+    {
+        if (! method_exists($record, 'regenerateCode')) {
+            throw new \LogicException(sprintf(
+                'Model [%s] must expose regenerateCode() method.',
+                get_class($record)
+            ));
+        }
+
+        $record->regenerateCode((bool) $this->option('force'));
+    }
+
+    /* -----------------------------------------------------------------
+     |  Query & Validation
+     | -----------------------------------------------------------------
+     */
+
+    protected function buildQuery(string $modelClass, string $column)
+    {
+        return $modelClass::query()
+            ->when(
+                ! $this->option('force'),
+                fn($q) => $q->whereNull($column)
+            );
+    }
+
+    protected function usesCodeGeneration(string $modelClass): bool
+    {
+        return in_array(
+            'Atannex\Foundation\Concerns\CanGenerateCode',
+            class_uses_recursive($modelClass),
+            true
+        );
+    }
+
+    protected function resolveCodeColumn(Model $model): string
+    {
+        return $this->option('column')
+            ?: (method_exists($model, 'codeColumn') ? $model->codeColumn() : 'code');
+    }
+
+    protected function columnExists(Model $model, string $column): bool
+    {
+        return $model->getConnection()
+            ->getSchemaBuilder()
+            ->hasColumn($model->getTable(), $column);
+    }
+
+    /* -----------------------------------------------------------------
+     |  Output Rendering
+     | -----------------------------------------------------------------
+     */
+
+    protected function renderSummary(string $model, string $column, int $total): void
+    {
+        $this->info("Processing model: {$model}");
+        $this->line("  • Column: {$column}");
+        $this->line("  • Records: {$total}");
+        $this->line("  • Force: " . ($this->option('force') ? 'YES' : 'no'));
+        $this->line("  • Dry-run: " . ($this->option('dry-run') ? 'YES' : 'no'));
+        $this->newLine();
+    }
+
+    protected function renderResults(int $success, Collection $failures): int
+    {
+        $this->info("Successfully processed: {$success}");
 
         if ($failures->isNotEmpty()) {
-            $this->error("Failed: {$failures->count()} records");
+            $this->error("Failures: {$failures->count()}");
 
             if ($this->output->isVerbose()) {
-                $failures->each(function ($f) {
-                    $this->line("  • ID {$f['id']}: <fg=red>{$f['error']}</>");
-                });
+                foreach ($failures as $failure) {
+                    $this->line(" - ID {$failure['id']}: {$failure['error']}");
+                }
             } else {
-                $this->line('  Run with <comment>-v</comment> to see detailed errors.');
+                $this->line('Run with -v for detailed errors.');
             }
         }
 
-        if ($dryRun) {
-            $this->comment('Dry run finished — no data was changed.');
+        if ($this->option('dry-run')) {
+            $this->comment('Dry-run completed. No data was modified.');
         }
 
-        return $failures->isEmpty() ? self::SUCCESS : self::FAILURE;
+        return $failures->isEmpty()
+            ? self::SUCCESS
+            : self::FAILURE;
     }
 
-    /**
-     * Try different common namespace patterns
+    /* -----------------------------------------------------------------
+     |  Utilities
+     | -----------------------------------------------------------------
      */
+
+    protected function configureMemory(): void
+    {
+        $limit = $this->option('memory-limit');
+
+        if ($limit && ini_set('memory_limit', $limit) === false) {
+            $this->warn("Unable to set memory limit to {$limit}");
+        }
+    }
+
     protected function resolveModelClass(string $input): string
     {
         $input = trim($input);
 
-        // Already full class name
         if (class_exists($input)) {
             return $input;
         }
 
-        // Common patterns
-        $attempts = [
-            $input,
-            "App\\Models\\{$input}",
-            "App\\Models\\Regions\\{$input}",
-            "App\\{$input}",
-            "Domain\\{$input}",
-            "App\\Models\\{$input}Model",
+        $namespaces = [
+            '',
+            'App\\Models\\',
+            'App\\',
+            'Domain\\',
         ];
 
-        foreach ($attempts as $candidate) {
+        foreach ($namespaces as $ns) {
+            $candidate = $ns . $input;
+
             if (class_exists($candidate)) {
                 return $candidate;
             }
         }
 
-        // Last resort — assume it's in App\Models
         return "App\\Models\\{$input}";
     }
 
-    protected function setMemoryLimit(string $limit): void
+    protected function failCommand(string $message): int
     {
-        if (ini_set('memory_limit', $limit) === false) {
-            $this->warn("Could not set memory_limit to {$limit}");
-        }
+        $this->error($message);
+        return self::FAILURE;
     }
 }
