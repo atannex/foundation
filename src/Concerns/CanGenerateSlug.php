@@ -84,10 +84,10 @@ trait CanGenerateSlug
     {
         return match ($this->getSlugMode()) {
             'random' => $this->generateRandomId(),
-            'mixed'  => $this->buildWordSlug()
-                . $this->getSeparator()
-                . $this->generateRandomId(),
-            default  => $this->buildWordSlug(),
+            'mixed' => $this->buildWordSlug()
+                .$this->getSeparator()
+                .$this->generateRandomId(),
+            default => $this->buildWordSlug(),
         };
     }
 
@@ -108,7 +108,7 @@ trait CanGenerateSlug
 
         if (is_array($source)) {
             return collect($source)
-                ->map(fn($field) => (string) ($this->{$field} ?? ''))
+                ->map(fn ($field) => (string) ($this->{$field} ?? ''))
                 ->filter()
                 ->implode(' ');
         }
@@ -131,7 +131,7 @@ trait CanGenerateSlug
         for ($i = 0; $i <= $maxAttempts; $i++) {
             $candidate = $i === 0
                 ? $base
-                : $base . $separator . $i;
+                : $base.$separator.$i;
 
             if (! $this->slugExists($candidate)) {
                 return $candidate;
@@ -139,7 +139,7 @@ trait CanGenerateSlug
         }
 
         // Final fallback (guaranteed uniqueness)
-        return $base . $separator . $this->generateRandomId(6);
+        return $base.$separator.$this->generateRandomId(6);
     }
 
     protected function slugExists(string $slug): bool
