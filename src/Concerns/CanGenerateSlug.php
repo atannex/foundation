@@ -7,6 +7,7 @@ namespace Atannex\Foundation\Concerns;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 trait CanGenerateSlug
 {
@@ -18,13 +19,26 @@ trait CanGenerateSlug
 
     protected static function bootCanGenerateSlug(): void
     {
-        static::creating(function (Model $model) {
-            $model->ensureSlug();
+        static::creating(function (Model $model): void {
+            $model->generateSlugIfMissing();
         });
 
-        static::updating(function (Model $model) {
+        static::updating(function (Model $model): void {
             if ($model->shouldRegenerateSlug()) {
                 $model->ensureSlug();
+            }
+        });
+
+        static::restoring(function (Model $model): void {
+            if ($model->shouldRegenerateSlugOnRestore()) {
+                $model->ensureSlug();
+            }
+        });
+
+        // Optional hook for soft deletes or auditing
+        static::deleting(function (Model $model): void {
+            if (method_exists($model, 'onDeletingSlug')) {
+                $model->onDeletingSlug();
             }
         });
     }
@@ -38,9 +52,26 @@ trait CanGenerateSlug
     public function ensureSlug(): void
     {
         $slug = $this->buildSlug();
-        $slug = $this->makeSlugUnique($slug);
 
-        $this->{$this->getSlugColumn()} = $slug;
+        if ($slug === '') {
+            throw new RuntimeException(sprintf(
+                'Cannot generate slug: empty source for model [%s].',
+                static::class
+            ));
+        }
+
+        $this->{$this->getSlugColumn()} = $this->makeSlugUnique($slug);
+    }
+
+    protected function generateSlugIfMissing(): void
+    {
+        $column = $this->getSlugColumn();
+
+        if (! empty($this->{$column})) {
+            return;
+        }
+
+        $this->ensureSlug();
     }
 
     /*
@@ -53,15 +84,20 @@ trait CanGenerateSlug
     {
         return match ($this->getSlugMode()) {
             'random' => $this->generateRandomId(),
-            'mixed' => $this->buildWordSlug().$this->getSeparator().$this->generateRandomId(),
-            default => $this->buildWordSlug(),
+            'mixed'  => $this->buildWordSlug()
+                . $this->getSeparator()
+                . $this->generateRandomId(),
+            default  => $this->buildWordSlug(),
         };
     }
 
     protected function buildWordSlug(): string
     {
-        $source = $this->slugSourceValue();
-        $source = $this->transformSource($source);
+        $source = $this->transformSource($this->slugSourceValue());
+
+        if ($source === '') {
+            return '';
+        }
 
         return Str::slug($source, $this->getSeparator());
     }
@@ -72,7 +108,7 @@ trait CanGenerateSlug
 
         if (is_array($source)) {
             return collect($source)
-                ->map(fn ($field) => (string) ($this->{$field} ?? ''))
+                ->map(fn($field) => (string) ($this->{$field} ?? ''))
                 ->filter()
                 ->implode(' ');
         }
@@ -89,22 +125,21 @@ trait CanGenerateSlug
     protected function makeSlugUnique(string $slug): string
     {
         $base = $slug;
-        $count = 1;
+        $separator = $this->getSeparator();
         $maxAttempts = $this->getSlugMaxAttempts();
 
-        while ($this->slugExists($slug)) {
-            if ($count > $maxAttempts) {
-                throw new \RuntimeException(sprintf(
-                    'Unable to generate unique slug for [%s] after %d attempts.',
-                    static::class,
-                    $maxAttempts
-                ));
-            }
+        for ($i = 0; $i <= $maxAttempts; $i++) {
+            $candidate = $i === 0
+                ? $base
+                : $base . $separator . $i;
 
-            $slug = $base.$this->getSeparator().$count++;
+            if (! $this->slugExists($candidate)) {
+                return $candidate;
+            }
         }
 
-        return $slug;
+        // Final fallback (guaranteed uniqueness)
+        return $base . $separator . $this->generateRandomId(6);
     }
 
     protected function slugExists(string $slug): bool
@@ -125,7 +160,7 @@ trait CanGenerateSlug
 
     /*
     |--------------------------------------------------------------------------
-    | Query Customization (GLOBAL POWER)
+    | Query Customization
     |--------------------------------------------------------------------------
     */
 
@@ -136,7 +171,7 @@ trait CanGenerateSlug
     }
 
     /**
-     * Override this in model for tenant / status scoping.
+     * Override for multi-tenant / scoped uniqueness.
      */
     protected function applySlugConstraints(Builder $query): Builder
     {
@@ -155,11 +190,25 @@ trait CanGenerateSlug
 
     protected function shouldRegenerateSlug(): bool
     {
+        if (! $this->shouldAutoGenerateSlugOnUpdate()) {
+            return false;
+        }
+
         $source = $this->getSlugSource();
 
         return is_array($source)
             ? $this->isDirty($source)
             : $this->isDirty([$source]);
+    }
+
+    protected function shouldRegenerateSlugOnRestore(): bool
+    {
+        return false; // safe default
+    }
+
+    protected function shouldAutoGenerateSlugOnUpdate(): bool
+    {
+        return true;
     }
 
     /*
@@ -188,7 +237,7 @@ trait CanGenerateSlug
     {
         return property_exists($this, 'slugMode')
             ? $this->slugMode
-            : 'word';
+            : 'word'; // word | mixed | random
     }
 
     protected function getSlugColumn(): string

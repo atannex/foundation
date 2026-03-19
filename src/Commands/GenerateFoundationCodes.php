@@ -16,7 +16,7 @@ use Throwable;
 
 class GenerateFoundationCodes extends Command
 {
-    protected $signature = 'atannex:generate-code
+    protected $signature = 'generate:atannex-code
         {model? : Model class (optional)}
         {--force : Force regenerate codes}
         {--with-trashed : Include soft deleted records}
