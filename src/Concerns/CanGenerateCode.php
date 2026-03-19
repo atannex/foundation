@@ -31,9 +31,11 @@ use RuntimeException;
  * class Product extends Model
  * {
  *     use CanGenerateCode;
- *     protected string $codePrefix = 'PRD';
- *     protected string $codeSourceColumn = 'product_name';
+ *     protected string $codeColumn = 'code';
+ *     protected string $codeSourceColumn = 'name';
  * }
+ *
+ * @since 1.1.0 Improved to use property-based configuration
  */
 trait CanGenerateCode
 {
@@ -61,14 +63,14 @@ trait CanGenerateCode
      */
     protected function initializeGeneratedCode(): void
     {
-        $column = $this->codeColumn();
+        $column = $this->getCodeColumn();
 
         if ($this->hasPredefinedCode($column)) {
             return;
         }
 
         $abbreviation = $this->buildAbbreviation(
-            (string) $this->getAttribute($this->sourceColumn())
+            (string) $this->getAttribute($this->getSourceColumn())
         );
 
         $this->setAttribute(
@@ -84,12 +86,11 @@ trait CanGenerateCode
      * force regeneration even if a code already exists.
      *
      * @param  bool  $force  Force regeneration of existing code
-     *
      * @throws RuntimeException If generation fails after max attempts
      */
     public function regenerateCode(bool $force = false): void
     {
-        $column = $this->codeColumn();
+        $column = $this->getCodeColumn();
 
         if ($force) {
             $this->setAttribute($column, null);
@@ -99,71 +100,119 @@ trait CanGenerateCode
     }
 
     /* =====================================================================
-     |  Configuration (Customization Points)
+     |  Configuration Access (Property-Based with Method Fallback)
      | ===================================================================== */
 
     /**
      * Get the column name where the generated code is stored.
+     *
+     * Uses property if defined, otherwise falls back to default.
+     *
+     * @return string
      */
-    protected function codeColumn(): string
+    protected function getCodeColumn(): string
     {
-        return $this->codeColumn ?? 'code';
+        return $this->getConfigProperty('codeColumn', 'code');
     }
 
     /**
      * Get the source column to derive the abbreviation from.
+     *
+     * Uses property if defined, otherwise falls back to default.
+     *
+     * @return string
      */
-    protected function sourceColumn(): string
+    protected function getSourceColumn(): string
     {
-        return $this->codeSourceColumn ?? 'name';
+        return $this->getConfigProperty('codeSourceColumn', 'name');
     }
 
     /**
      * Get the prefix for generated codes.
+     *
+     * Uses property if defined, otherwise falls back to default.
+     *
+     * @return string
      */
-    protected function codePrefix(): string
+    protected function getCodePrefix(): string
     {
-        return $this->codePrefix ?? 'ATA';
+        return $this->getConfigProperty('codePrefix', 'ATA');
     }
 
     /**
      * Get the year format for code generation.
      *
      * Accepts any valid PHP date format (e.g., 'y' for 2-digit year, 'Y' for full).
+     *
+     * Uses property if defined, otherwise falls back to default.
+     *
+     * @return string
      */
-    protected function yearFormat(): string
+    protected function getYearFormat(): string
     {
-        return $this->codeYearFormat ?? 'y';
+        return $this->getConfigProperty('codeYearFormat', 'y');
     }
 
     /**
      * Get the length of the abbreviation component.
      *
+     * Uses property if defined, otherwise falls back to default.
+     *
      * @return int Must be greater than 0
      */
-    protected function abbreviationLength(): int
+    protected function getAbbreviationLength(): int
     {
-        return $this->codeAbbreviationLength ?? 2;
+        $value = $this->getConfigProperty('codeAbbreviationLength', 2);
+        return is_int($value) ? $value : 2;
     }
 
     /**
      * Get the length of the random numeric component.
      *
+     * Uses property if defined, otherwise falls back to default.
+     *
      * @return int Must be greater than 0
      */
-    protected function randomLength(): int
+    protected function getRandomLength(): int
     {
-        return $this->codeRandomLength ?? 4;
+        $value = $this->getConfigProperty('codeRandomLength', 4);
+        return is_int($value) ? $value : 4;
     }
 
     /**
      * Get the maximum number of generation attempts before failing.
      *
      * Increase this for high-collision scenarios.
+     *
+     * Uses property if defined, otherwise falls back to default.
+     *
+     * @return int
      */
-    protected function maxAttempts(): int
+    protected function getMaxAttempts(): int
     {
-        return $this->codeMaxAttempts ?? 12;
+        $value = $this->getConfigProperty('codeMaxAttempts', 12);
+        return is_int($value) ? $value : 12;
+    }
+
+    /**
+     * Safely retrieve configuration property.
+     *
+     * This method prevents conflicts with Eloquent's magic accessor system
+     * by checking property existence before accessing it.
+     *
+     * @param  string  $property
+     * @param  mixed  $default
+     * @return mixed
+     */
+    private function getConfigProperty(string $property, mixed $default = null): mixed
+    {
+        // Check if property is declared on the model
+        if (property_exists($this, $property)) {
+            // Directly access the property without triggering __get
+            return $this->{$property} ?? $default;
+        }
+
+        return $default;
     }
 
     /**
@@ -171,6 +220,7 @@ trait CanGenerateCode
      *
      * Override this method to restrict code uniqueness to specific scopes.
      *
+     * @return Builder
      *
      * @example
      * protected function uniquenessQuery(): Builder
@@ -215,36 +265,45 @@ trait CanGenerateCode
 
     /**
      * Build the immutable context for code generation.
+     *
+     * @param  string  $abbreviation
+     * @return array
      */
     private function buildContext(string $abbreviation): array
     {
         return [
-            'prefix' => $this->codePrefix(),
-            'year' => now()->format($this->yearFormat()),
+            'prefix' => $this->getCodePrefix(),
+            'year' => now()->format($this->getYearFormat()),
             'abbr' => $this->normalizeAbbreviation($abbreviation),
-            'randomLen' => $this->randomLength(),
-            'maxAttempts' => $this->maxAttempts(),
+            'randomLen' => $this->getRandomLength(),
+            'maxAttempts' => $this->getMaxAttempts(),
         ];
     }
 
     /**
      * Compose the final code string from context.
+     *
+     * @param  array  $context
+     * @return string
      */
     private function composeCode(array $context): string
     {
         return $context['prefix']
-            .$context['year']
-            .$context['abbr']
-            .$this->generateRandomDigits($context['randomLen']);
+            . $context['year']
+            . $context['abbr']
+            . $this->generateRandomDigits($context['randomLen']);
     }
 
     /**
      * Check if a code already exists in the database.
+     *
+     * @param  string  $code
+     * @return bool
      */
     private function codeExists(string $code): bool
     {
         return $this->uniquenessQuery()
-            ->where($this->codeColumn(), $code)
+            ->where($this->getCodeColumn(), $code)
             ->exists();
     }
 
@@ -273,22 +332,28 @@ trait CanGenerateCode
             ->map(fn (string $word) => Str::upper(Str::substr($word, 0, 1)));
 
         return $letters
-            ->take($this->abbreviationLength())
+            ->take($this->getAbbreviationLength())
             ->implode('');
     }
 
     /**
      * Normalize abbreviation to correct length and uppercase.
+     *
+     * @param  string  $abbr
+     * @return string
      */
     protected function normalizeAbbreviation(string $abbr): string
     {
         return Str::upper(
-            Str::substr($abbr, 0, $this->abbreviationLength())
+            Str::substr($abbr, 0, $this->getAbbreviationLength())
         );
     }
 
     /**
      * Sanitize text by removing special characters.
+     *
+     * @param  string  $value
+     * @return string
      */
     private function sanitizeText(string $value): string
     {
@@ -317,7 +382,7 @@ trait CanGenerateCode
             return '';
         }
 
-        $min = (int) ('1'.str_repeat('0', $length - 1));
+        $min = (int) ('1' . str_repeat('0', $length - 1));
         $max = (int) str_repeat('9', $length);
 
         return (string) random_int($min, $max);
@@ -329,6 +394,9 @@ trait CanGenerateCode
 
     /**
      * Determine if a code is already defined on the model.
+     *
+     * @param  string  $column
+     * @return bool
      */
     private function hasPredefinedCode(string $column): bool
     {
@@ -337,6 +405,9 @@ trait CanGenerateCode
 
     /**
      * Build detailed exception with generation context.
+     *
+     * @param  array  $context
+     * @return RuntimeException
      */
     private function buildGenerationException(array $context): RuntimeException
     {
