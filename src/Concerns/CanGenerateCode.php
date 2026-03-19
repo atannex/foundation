@@ -90,9 +90,9 @@ trait CanGenerateCode
 
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             $candidate = $prefix
-                . $year
-                . $abbr
-                . $this->generateRandomNumericString($randomLength);
+                .$year
+                .$abbr
+                .$this->generateRandomNumericString($randomLength);
 
             if (! $this->getUniquenessQuery()->where($column, $candidate)->exists()) {
                 return $candidate;
