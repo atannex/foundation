@@ -13,6 +13,37 @@ trait CanGenerateSlug
 {
     /*
     |--------------------------------------------------------------------------
+    | CONFIGURATION
+    |--------------------------------------------------------------------------
+    */
+
+    protected function getSlugColumn(): string
+    {
+        return $this->slugColumn ?? 'slug';
+    }
+
+    protected function getSlugSource(): string|array
+    {
+        return $this->slugSource ?? 'title';
+    }
+
+    protected function getSlugMode(): string
+    {
+        return $this->slugMode ?? 'word';
+    }
+
+    protected function getSlugSeparator(): string
+    {
+        return $this->slugSeparator ?? '-';
+    }
+
+    protected function getSlugMaxAttempts(): int
+    {
+        return $this->slugMaxAttempts ?? 50;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | BOOT
     |--------------------------------------------------------------------------
     */
@@ -71,7 +102,7 @@ trait CanGenerateSlug
 
         if ($slug === '') {
             throw new RuntimeException(
-                static::class.' cannot generate slug: empty source.'
+                static::class . ' cannot generate slug: empty source.'
             );
         }
 
@@ -118,8 +149,8 @@ trait CanGenerateSlug
             'random' => $this->randomId(),
 
             'mixed' => $this->wordSlug($config)
-                .$config['separator']
-                .$this->randomId(),
+                . $config['separator']
+                . $this->randomId(),
 
             default => $this->wordSlug($config),
         };
@@ -144,7 +175,7 @@ trait CanGenerateSlug
     {
         if (is_array($source)) {
             return collect($source)
-                ->map(fn ($field) => $this->resolveDotValue($field))
+                ->map(fn($field) => $this->resolveDotValue($field))
                 ->filter()
                 ->implode(' ');
         }
@@ -198,14 +229,14 @@ trait CanGenerateSlug
 
             $candidate = $i === 0
                 ? $base
-                : $base.$sep.$i;
+                : $base . $sep . $i;
 
             if (! $this->slugExists($candidate, $config['column'])) {
                 return $candidate;
             }
         }
 
-        return $base.$sep.$this->randomId(6);
+        return $base . $sep . $this->randomId(6);
     }
 
     protected function slugExists(string $slug, string $column): bool
@@ -273,36 +304,5 @@ trait CanGenerateSlug
     protected function randomId(int $length = 12): string
     {
         return Str::lower(Str::random($length));
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | CONFIGURATION
-    |--------------------------------------------------------------------------
-    */
-
-    protected function getSlugColumn(): string
-    {
-        return $this->slugColumn ?? 'slug';
-    }
-
-    protected function getSlugSource(): string|array
-    {
-        return $this->slugSource ?? 'title';
-    }
-
-    protected function getSlugMode(): string
-    {
-        return $this->slugMode ?? 'word';
-    }
-
-    protected function getSlugSeparator(): string
-    {
-        return $this->slugSeparator ?? '-';
-    }
-
-    protected function getSlugMaxAttempts(): int
-    {
-        return $this->slugMaxAttempts ?? 50;
     }
 }
