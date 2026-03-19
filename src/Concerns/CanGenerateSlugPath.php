@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Atannex\Foundation\Concerns;
 
+use Atannex\Foundation\Supports\ResolveDotValue;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,6 +13,8 @@ use RuntimeException;
 
 trait CanGenerateSlugPath
 {
+    use ResolveDotValue;
+
     /*
     |--------------------------------------------------------------------------
     | BOOT
@@ -28,7 +31,7 @@ trait CanGenerateSlugPath
 
         static::saved(function (Model $model): void {
             if ($model->wasChanged($model->slugPathRelevantColumns())) {
-                DB::afterCommit(fn () => $model->updateDescendants());
+                DB::afterCommit(fn() => $model->updateDescendants());
             }
         });
     }
@@ -104,7 +107,7 @@ trait CanGenerateSlugPath
         $base = $parent->{$cfg['path']} ?? $parent->{$cfg['slug']};
 
         $this->{$cfg['path']} = trim(
-            $base.$cfg['separator'].$slug,
+            $base . $cfg['separator'] . $slug,
             $cfg['separator']
         );
     }
@@ -243,27 +246,6 @@ trait CanGenerateSlugPath
                 $cfg['parent'],
             ])
             ->first();
-    }
-
-    protected function resolveDotValue(string $path): string
-    {
-        $segments = explode('.', $path);
-
-        $value = $this;
-
-        foreach ($segments as $segment) {
-            if (is_object($value)) {
-                $value = $value->{$segment} ?? null;
-            } else {
-                return '';
-            }
-
-            if ($value === null) {
-                return '';
-            }
-        }
-
-        return (string) $value;
     }
 
     protected function cfg(string $key): mixed

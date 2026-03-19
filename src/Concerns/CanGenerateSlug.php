@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Atannex\Foundation\Concerns;
 
+use Atannex\Foundation\Supports\ResolveDotValue;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
@@ -11,6 +12,8 @@ use RuntimeException;
 
 trait CanGenerateSlug
 {
+    use ResolveDotValue;
+
     /*
     |--------------------------------------------------------------------------
     | BOOT
@@ -150,36 +153,6 @@ trait CanGenerateSlug
         }
 
         return $this->resolveDotValue($source);
-    }
-
-    /**
-     * Supports:
-     * - title
-     * - user.name
-     * - team.owner.name
-     */
-    protected function resolveDotValue(string $path): string
-    {
-        $segments = explode('.', $path);
-
-        $value = $this;
-
-        foreach ($segments as $segment) {
-
-            if (is_object($value)) {
-                $value = $value->{$segment} ?? null;
-            } elseif (is_array($value)) {
-                $value = $value[$segment] ?? null;
-            } else {
-                return '';
-            }
-
-            if ($value === null) {
-                return '';
-            }
-        }
-
-        return (string) $value;
     }
 
     /*
