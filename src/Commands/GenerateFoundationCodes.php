@@ -34,13 +34,11 @@ class GenerateFoundationCodes extends Command
             $models = $this->resolveTargetModels();
         } catch (Throwable $e) {
             $this->error($e->getMessage());
-
             return self::FAILURE;
         }
 
         if ($models->isEmpty()) {
             $this->warn('No valid models found.');
-
             return self::FAILURE;
         }
 
@@ -64,7 +62,6 @@ class GenerateFoundationCodes extends Command
 
             if (! method_exists($model, 'resolveCodeColumn')) {
                 $this->warn("Skipping {$modelClass} (invalid trait)");
-
                 continue;
             }
 
@@ -72,18 +69,18 @@ class GenerateFoundationCodes extends Command
 
             if (! $this->columnExists($model, $codeColumn)) {
                 $this->warn("Skipping {$modelClass} (missing column: {$codeColumn})");
-
                 continue;
             }
 
             $query = $modelClass::query();
 
-            // Soft delete handling
+            // 🔥 AUTO EAGER LOAD (critical for user.name etc.)
+            $this->applyEagerLoading($query, $model);
+
             if ($withTrashed && $this->usesSoftDeletes($model)) {
-                $query = $query->withTrashed();
+                $query->withTrashed();
             }
 
-            // Only missing unless forced
             if (! $force) {
                 $query->whereNull($codeColumn);
             }
@@ -92,7 +89,6 @@ class GenerateFoundationCodes extends Command
 
             if ($count === 0) {
                 $this->line("No records for {$modelClass}");
-
                 continue;
             }
 
@@ -157,30 +153,48 @@ class GenerateFoundationCodes extends Command
 
     protected function processRecord(Model $record, bool $force, bool $dryRun): void
     {
-        $attempts = 0;
         $maxRetries = 3;
 
-        retry:
-        try {
-            DB::beginTransaction();
+        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
+            try {
+                DB::beginTransaction();
 
-            $record->applyGeneratedCode($force);
+                $record->applyGeneratedCode($force);
 
-            if (! $dryRun) {
-                $record->saveQuietly();
+                if (! $dryRun) {
+                    $record->saveQuietly();
+                }
+
+                DB::commit();
+                return;
+            } catch (Throwable $e) {
+                DB::rollBack();
+
+                if (! $this->isUniqueConstraintError($e) || $attempt === $maxRetries - 1) {
+                    throw $e;
+                }
             }
-
-            DB::commit();
-        } catch (Throwable $e) {
-            DB::rollBack();
-
-            if ($this->isUniqueConstraintError($e) && $attempts < $maxRetries) {
-                $attempts++;
-                goto retry;
-            }
-
-            throw $e;
         }
+    }
+
+    /* -----------------------------------------------------------------
+     |  AUTO EAGER LOADING (KEY UPGRADE)
+     |-----------------------------------------------------------------*/
+
+    protected function applyEagerLoading($query, Model $model): void
+    {
+        $config = $model->resolveCodeConfig();
+        $source = $config['source'] ?? '';
+
+        if (! str_contains($source, '.')) {
+            return;
+        }
+
+        // Extract relationship path (e.g. user.profile)
+        $relations = explode('.', $source);
+        array_pop($relations); // remove final field
+
+        $query->with(implode('.', $relations));
     }
 
     /* -----------------------------------------------------------------
@@ -206,7 +220,7 @@ class GenerateFoundationCodes extends Command
         }
 
         return collect($this->discoverModels(app_path('Models')))
-            ->filter(fn ($c) => $this->usesTrait($c))
+            ->filter(fn($c) => $this->usesTrait($c))
             ->values();
     }
 
@@ -217,9 +231,9 @@ class GenerateFoundationCodes extends Command
         }
 
         return collect(scandir($path))
-            ->filter(fn ($f) => str_ends_with($f, '.php'))
-            ->map(fn ($f) => 'App\\Models\\'.Str::replaceLast('.php', '', $f))
-            ->filter(fn ($c) => class_exists($c))
+            ->filter(fn($f) => str_ends_with($f, '.php'))
+            ->map(fn($f) => 'App\\Models\\' . Str::replaceLast('.php', '', $f))
+            ->filter(fn($c) => class_exists($c))
             ->values()
             ->all();
     }
@@ -259,13 +273,13 @@ class GenerateFoundationCodes extends Command
             return $input;
         }
 
-        $namespaces = [
-            "App\\Models\\{$input}",
-            "App\\{$input}",
-            "Domain\\{$input}",
-        ];
-
-        foreach ($namespaces as $class) {
+        foreach (
+            [
+                "App\\Models\\{$input}",
+                "App\\{$input}",
+                "Domain\\{$input}",
+            ] as $class
+        ) {
             if (class_exists($class)) {
                 return $class;
             }
@@ -276,8 +290,8 @@ class GenerateFoundationCodes extends Command
 
     protected function isUniqueConstraintError(Throwable $e): bool
     {
-        return str_contains($e->getMessage(), 'UNIQUE')
-            || str_contains($e->getMessage(), 'duplicate');
+        return str_contains(strtolower($e->getMessage()), 'unique')
+            || str_contains(strtolower($e->getMessage()), 'duplicate');
     }
 
     protected function setMemoryLimit(string $limit): void
