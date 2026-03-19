@@ -28,46 +28,51 @@ class GenerateFoundationCodes extends Command
 
         if (! class_exists($modelClass)) {
             $this->error("Model class not found: <comment>{$modelClass}</comment>");
+
             return self::FAILURE;
         }
 
         if (! in_array('Atannex\Foundation\Concerns\CanGenerateCode', class_uses_recursive($modelClass), true)) {
             $this->error("Model <comment>{$modelClass}</comment> does not use the CanGenerateCode trait.");
+
             return self::FAILURE;
         }
 
         /** @var Model $model */
-        $model = new $modelClass();
+        $model = new $modelClass;
         $codeColumn = $this->option('column');
 
         // Make sure the column actually exists on the model/table
         if (! $model->getConnection()->getSchemaBuilder()->hasColumn($model->getTable(), $codeColumn)) {
             $this->error("Column <comment>{$codeColumn}</comment> does not exist on table <comment>{$model->getTable()}</comment>");
+
             return self::FAILURE;
         }
 
         $dryRun = $this->option('dry-run');
-        $force  = $this->option('force');
+        $force = $this->option('force');
 
         $query = $modelClass::query()
-            ->when(! $force, fn($q) => $q->whereNull($codeColumn));
+            ->when(! $force, fn ($q) => $q->whereNull($codeColumn));
 
         $totalToProcess = $query->count();
 
         if ($totalToProcess === 0) {
             $this->info('No records need code generation.');
+
             return self::SUCCESS;
         }
 
         $this->newLine();
         $this->info("Found <fg=yellow>{$totalToProcess}</> records to process in model <comment>{$modelClass}</comment>");
         $this->line("  • Column:       <comment>{$codeColumn}</comment>");
-        $this->line("  • Force mode:   " . ($force ? '<fg=red>YES</>' : 'no'));
-        $this->line("  • Dry-run:      " . ($dryRun ? '<fg=yellow>YES (no changes will be saved)</>' : 'no'));
+        $this->line('  • Force mode:   '.($force ? '<fg=red>YES</>' : 'no'));
+        $this->line('  • Dry-run:      '.($dryRun ? '<fg=yellow>YES (no changes will be saved)</>' : 'no'));
         $this->newLine();
 
         if (! $this->confirm('Continue?', true)) {
             $this->info('Command cancelled.');
+
             return self::SUCCESS;
         }
 
@@ -95,7 +100,7 @@ class GenerateFoundationCodes extends Command
                     $successCount++;
                 } catch (Throwable $e) {
                     $failures->push([
-                        'id'    => $record->getKey(),
+                        'id' => $record->getKey(),
                         'error' => $e->getMessage(),
                     ]);
                 }
