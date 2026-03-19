@@ -97,7 +97,7 @@ trait HandlesDateArchiveResolution
         $modelClass = $this->getArchiveModelClass();
 
         /** @var Model $model */
-        $model = new $modelClass();
+        $model = new $modelClass;
 
         $query = $model->newQuery();
 

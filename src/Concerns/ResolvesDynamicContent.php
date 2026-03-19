@@ -91,7 +91,7 @@ trait ResolvesDynamicContent
         $sections = $entity->{$relation}()
             ->limit($sectionLimit)
             ->with([
-                $this->getWidgetRelation() => function ($query) use ($entity, $widgetLimit) {
+                $this->getWidgetRelation() => function ($query) use ($widgetLimit) {
                     $query->limit($widgetLimit);
                 },
             ])
@@ -136,11 +136,12 @@ trait ResolvesDynamicContent
     {
         if (empty($config[$tabKey]) || ! is_array($config[$tabKey])) {
             $entity->setRelation('tabs', collect());
+
             return;
         }
 
         $tabs = collect($config[$tabKey])
-            ->map(fn($tab) => $this->resolveSingleTab($tab))
+            ->map(fn ($tab) => $this->resolveSingleTab($tab))
             ->values();
 
         $entity->setRelation('tabs', $tabs);
@@ -152,6 +153,7 @@ trait ResolvesDynamicContent
 
         if (! $mapping || empty($mapping['method'])) {
             $tab['content'] = collect();
+
             return $tab;
         }
 

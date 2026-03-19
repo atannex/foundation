@@ -2,7 +2,6 @@
 
 namespace Atannex\Foundation\Tests;
 
-use Atannex\Foundation\FoundationManagerServiceProvider;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Orchestra\Testbench\TestCase as Orchestra;
 

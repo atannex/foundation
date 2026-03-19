@@ -53,8 +53,8 @@ trait CanGenerateSlug
     {
         return match ($this->getSlugMode()) {
             'random' => $this->generateRandomId(),
-            'mixed' => $this->buildWordSlug() . $this->getSeparator() . $this->generateRandomId(),
-            default  => $this->buildWordSlug(),
+            'mixed' => $this->buildWordSlug().$this->getSeparator().$this->generateRandomId(),
+            default => $this->buildWordSlug(),
         };
     }
 
@@ -72,7 +72,7 @@ trait CanGenerateSlug
 
         if (is_array($source)) {
             return collect($source)
-                ->map(fn($field) => (string) ($this->{$field} ?? ''))
+                ->map(fn ($field) => (string) ($this->{$field} ?? ''))
                 ->filter()
                 ->implode(' ');
         }
@@ -101,7 +101,7 @@ trait CanGenerateSlug
                 ));
             }
 
-            $slug = $base . $this->getSeparator() . $count++;
+            $slug = $base.$this->getSeparator().$count++;
         }
 
         return $slug;

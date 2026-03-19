@@ -51,7 +51,8 @@ trait CanGenerateCode
     |--------------------------------------------------------------------------
     */
 
-    public function generateUniqueCode(string $abbreviation, string $field = 'code'): string {
+    public function generateUniqueCode(string $abbreviation, string $field = 'code'): string
+    {
 
         $prefix = $this->getCodePrefix();
         $year = now()->format($this->getCodeYearFormat());
@@ -113,7 +114,7 @@ trait CanGenerateCode
         return Str::upper(
             collect(explode(' ', $clean))
                 ->filter()
-                ->map(fn($word) => Str::substr($word, 0, 1))
+                ->map(fn ($word) => Str::substr($word, 0, 1))
                 ->take($max)
                 ->implode('')
         );

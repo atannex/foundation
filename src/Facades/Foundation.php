@@ -2,6 +2,7 @@
 
 namespace Atannex\Foundation\Facades;
 
+use Atannex\Foundation\FoundationManager;
 use Illuminate\Support\Facades\Facade;
 
 /**
@@ -11,6 +12,6 @@ class Foundation extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
-        return \Atannex\Foundation\FoundationManager::class;
+        return FoundationManager::class;
     }
 }

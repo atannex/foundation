@@ -67,9 +67,9 @@ trait CanGenerateSlugPath
         $parent = $this->relationLoaded('parent')
             ? $this->parent
             : $this->parent()
-            ->withoutGlobalScopes()
-            ->select(['id', $slugColumn, $slugPathColumn])
-            ->first();
+                ->withoutGlobalScopes()
+                ->select(['id', $slugColumn, $slugPathColumn])
+                ->first();
 
         if (! $parent) {
             return $this->{$slugColumn};
@@ -77,7 +77,7 @@ trait CanGenerateSlugPath
 
         $base = $parent->{$slugPathColumn} ?: $parent->{$slugColumn};
 
-        return trim($base . '/' . $this->{$slugColumn}, '/');
+        return trim($base.'/'.$this->{$slugColumn}, '/');
     }
 
     public function updateSlugPathIfNeeded(): void
@@ -133,7 +133,7 @@ trait CanGenerateSlugPath
         static::updating(function (Model $model) {
             if ($model->isDirty([
                 $model->getSlugColumn(),
-                $model->getParentColumn()
+                $model->getParentColumn(),
             ])) {
                 $column = $model->getSlugPathColumn();
                 $model->{$column} = $model->generateSlugPath();
@@ -143,7 +143,7 @@ trait CanGenerateSlugPath
         static::updated(function (Model $model) {
             if ($model->wasChanged([
                 $model->getSlugColumn(),
-                $model->getParentColumn()
+                $model->getParentColumn(),
             ])) {
                 DB::transaction(function () use ($model) {
                     $model->refresh();

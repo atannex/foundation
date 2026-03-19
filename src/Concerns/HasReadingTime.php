@@ -71,12 +71,12 @@ trait HasReadingTime
             if (is_array($item)) {
                 foreach ($keys as $key) {
                     if (! empty($item[$key]) && is_string($item[$key])) {
-                        $text .= ' ' . $item[$key];
+                        $text .= ' '.$item[$key];
                     }
                 }
 
                 // recursive extraction
-                $text .= ' ' . $this->extractText($item);
+                $text .= ' '.$this->extractText($item);
             }
         }
 

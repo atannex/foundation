@@ -8,13 +8,14 @@ use Atannex\Foundation\Concerns\CanGenerateSlugPath;
 use Atannex\Foundation\Concerns\HandleFileCleaning;
 use Atannex\Foundation\Concerns\HandlesDateArchiveResolution;
 use Atannex\Foundation\Concerns\HasReadingTime;
+
 // use Atannex\Foundation\Concerns\ResolvesDynamicContent;
 
-class FoundationManager {
-
+class FoundationManager
+{
     use CanGenerateCode;
-    use CanGenerateSlugPath;
     use CanGenerateSlug;
+    use CanGenerateSlugPath;
     use HandleFileCleaning;
     use HandlesDateArchiveResolution;
     use HasReadingTime;
