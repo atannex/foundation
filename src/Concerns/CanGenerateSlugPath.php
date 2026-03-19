@@ -18,25 +18,19 @@ trait CanGenerateSlugPath
     |--------------------------------------------------------------------------
     */
 
-    protected static function bootCanGenerateSlugPath(): void
+    protected static function bootHasSlugPath(): void
     {
-        static::creating(fn (Model $model) => $model->syncSlugPath());
-
-        static::updating(function (Model $model): void {
-            if ($model->isSlugRelevantDirty()) {
-                $model->syncSlugPath();
+        static::saving(function (Model $model) {
+            if ($model->shouldGenerateSlugPath()) {
+                $model->generateSlugPath();
             }
         });
 
-        static::updated(function (Model $model): void {
-            if ($model->wasSlugRelevantChanged()) {
-                DB::transaction(fn () => $model->cascadeSlugPathUpdate());
+        static::saved(function (Model $model) {
+            if ($model->wasChanged($model->slugRelevantColumns())) {
+                DB::afterCommit(fn() => $model->updateDescendants());
             }
         });
-
-        if (method_exists(static::class, 'restored')) {
-            static::restored(fn (Model $model) => $model->cascadeSlugPathUpdate());
-        }
     }
 
     /*
@@ -47,12 +41,12 @@ trait CanGenerateSlugPath
 
     public function parent(): BelongsTo
     {
-        return $this->belongsTo(static::class, $this->getSlugConfig('parent'));
+        return $this->belongsTo(static::class, $this->getParentColumn());
     }
 
     public function children(): HasMany
     {
-        return $this->hasMany(static::class, $this->getSlugConfig('parent'));
+        return $this->hasMany(static::class, $this->getParentColumn());
     }
 
     /*
@@ -61,64 +55,74 @@ trait CanGenerateSlugPath
     |--------------------------------------------------------------------------
     */
 
-    protected function syncSlugPath(): void
+    protected function generateSlugPath(): void
     {
-        $this->ensureSlugExists();
+        $slug = $this->getSlug();
 
-        $this->{$this->getSlugConfig('slug_path')} = $this->buildSlugPath();
-    }
+        if (! $this->{$this->getParentColumn()}) {
+            $this->{$this->getSlugPathColumn()} = $slug;
+            return;
+        }
 
-    protected function buildSlugPath(): string
-    {
-        $slug = (string) $this->{$this->getSlugConfig('slug')};
-
-        $parent = $this->getParentForSlug();
+        $parent = $this->getParentForPath();
 
         if (! $parent) {
-            return $slug;
+            $this->{$this->getSlugPathColumn()} = $slug;
+            return;
         }
 
-        $parentPath = $parent->{$this->getSlugConfig('slug_path')}
-            ?: $parent->{$this->getSlugConfig('slug')};
-
-        return trim($parentPath.'/'.$slug, '/');
+        $this->{$this->getSlugPathColumn()} = trim(
+            ($parent->{$this->getSlugPathColumn()} ?? $parent->{$this->getSlugColumn()}) . '/' . $slug,
+            '/'
+        );
     }
 
-    /**
-     * Cascade update using iterative breadth-first approach.
-     */
-    protected function cascadeSlugPathUpdate(): void
+    protected function updateDescendants(): void
     {
-        $this->refresh();
+        $this->guardAgainstCycles();
 
-        $queue = [$this];
-        $visited = [];
+        $this->loadMissing('children');
 
-        while (! empty($queue)) {
-            /** @var Model $node */
-            $node = array_shift($queue);
+        foreach ($this->children as $child) {
+            $child->generateSlugPath();
+            $child->saveQuietly();
 
-            if (in_array($node->getKey(), $visited, true)) {
-                throw new RuntimeException('Circular hierarchy detected in slug tree.');
-            }
-
-            $visited[] = $node->getKey();
-
-            $node->loadMissing('children');
-
-            foreach ($node->children as $child) {
-                $child->syncSlugPath();
-
-                // Save quietly to avoid infinite event loops
-                $child->saveQuietly();
-
-                $queue[] = $child;
-
-                $child->afterSlugPathUpdated();
-            }
+            $child->updateDescendants();
         }
+    }
 
-        $this->afterSlugPathUpdated();
+    /*
+    |--------------------------------------------------------------------------
+    | Guards
+    |--------------------------------------------------------------------------
+    */
+
+    protected function guardAgainstCycles(): void
+    {
+        $visited = [];
+        $current = $this;
+
+        while ($current) {
+            if (in_array($current->getKey(), $visited, true)) {
+                throw new RuntimeException('Circular hierarchy detected.');
+            }
+
+            $visited[] = $current->getKey();
+            $current = $current->getParentForPath();
+        }
+    }
+
+    protected function shouldGenerateSlugPath(): bool
+    {
+        return $this->isDirty($this->slugRelevantColumns());
+    }
+
+    protected function slugRelevantColumns(): array
+    {
+        return [
+            $this->getSlugColumn(),
+            $this->getParentColumn(),
+        ];
     }
 
     /*
@@ -127,7 +131,7 @@ trait CanGenerateSlugPath
     |--------------------------------------------------------------------------
     */
 
-    protected function getParentForSlug(): ?Model
+    protected function getParentForPath(): ?Model
     {
         if ($this->relationLoaded('parent')) {
             return $this->parent;
@@ -137,59 +141,21 @@ trait CanGenerateSlugPath
             ->withoutGlobalScopes()
             ->select([
                 $this->getKeyName(),
-                $this->getSlugConfig('slug'),
-                $this->getSlugConfig('slug_path'),
+                $this->getSlugColumn(),
+                $this->getSlugPathColumn(),
+                $this->getParentColumn(),
             ])
             ->first();
     }
 
-    protected function isSlugRelevantDirty(): bool
+    protected function getSlug(): string
     {
-        return $this->isDirty([
-            $this->getSlugConfig('slug'),
-            $this->getSlugConfig('parent'),
-        ]);
-    }
+        $column = $this->getSlugColumn();
 
-    protected function wasSlugRelevantChanged(): bool
-    {
-        return $this->wasChanged([
-            $this->getSlugConfig('slug'),
-            $this->getSlugConfig('parent'),
-        ]);
-    }
+        $value = $this->{$column} ?? null;
 
-    /*
-    |--------------------------------------------------------------------------
-    | Configuration
-    |--------------------------------------------------------------------------
-    */
-
-    protected array $slugConfigCache = [];
-
-    public function resolveSlugConfig(): array
-    {
-        return [
-            'parent' => 'parent_id',
-            'slug' => 'slug',
-            'slug_path' => 'slug_path',
-        ];
-    }
-
-    protected function getSlugConfig(string $key): string
-    {
-        if (empty($this->slugConfigCache)) {
-            $this->slugConfigCache = $this->resolveSlugConfig();
-        }
-
-        if (! array_key_exists($key, $this->slugConfigCache)) {
-            throw new RuntimeException("Missing slug config key: '{$key}'");
-        }
-
-        $value = $this->slugConfigCache[$key];
-
-        if (! is_string($value) || trim($value) === '') {
-            throw new RuntimeException("Invalid column name for key '{$key}'");
+        if (! is_string($value) || $value === '') {
+            throw new RuntimeException("Slug column [{$column}] must be a non-empty string.");
         }
 
         return $value;
@@ -197,31 +163,39 @@ trait CanGenerateSlugPath
 
     /*
     |--------------------------------------------------------------------------
-    | Safety
+    | Column Configuration
     |--------------------------------------------------------------------------
     */
 
-    protected function ensureSlugExists(): void
+    protected function getSlugColumn(): string
     {
-        $slugColumn = $this->getSlugConfig('slug');
+        return property_exists($this, 'slugColumn')
+            ? $this->slugColumn
+            : 'slug';
+    }
 
-        if (! isset($this->{$slugColumn}) || $this->{$slugColumn} === '') {
-            throw new RuntimeException(sprintf(
-                'Model [%s] requires non-empty "%s" for slug generation.',
-                static::class,
-                $slugColumn
-            ));
-        }
+    protected function getSlugPathColumn(): string
+    {
+        return property_exists($this, 'slugPathColumn')
+            ? $this->slugPathColumn
+            : 'slug_path';
+    }
+
+    protected function getParentColumn(): string
+    {
+        return property_exists($this, 'parentColumn')
+            ? $this->parentColumn
+            : 'parent_id';
     }
 
     /*
     |--------------------------------------------------------------------------
-    | Hooks (Extend in Model)
+    | Optional Hooks
     |--------------------------------------------------------------------------
     */
 
     protected function afterSlugPathUpdated(): void
     {
-        // Override in model if needed
+        // Extend if needed
     }
 }

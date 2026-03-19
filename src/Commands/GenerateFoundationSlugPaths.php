@@ -6,7 +6,6 @@ use Atannex\Foundation\Concerns\CanGenerateSlugPath;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Throwable;
@@ -15,10 +14,10 @@ class GenerateFoundationSlugPaths extends Command
 {
     protected $signature = 'generate:atannex-slug-path
         {model? : Optional model (e.g. App\\Models\\Category)}
-        {--dry-run : Preview changes without saving}
+        {--dry-run : Preview only, no database changes}
         {--force : Skip confirmation}';
 
-    protected $description = 'Efficiently regenerate slug paths for models using CanGenerateSlugPath';
+    protected $description = 'Regenerate slug paths for models using HasSlugPath trait';
 
     public function handle(): int
     {
@@ -26,14 +25,17 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found using CanGenerateSlugPath.');
-
             return self::SUCCESS;
         }
 
-        $this->info("Processing {$models->count()} model(s)...");
+        $this->info("Found {$models->count()} model(s):");
+        foreach ($models as $model) {
+            $this->line(" • {$model}");
+        }
 
         if (! $this->option('dry-run') && ! $this->option('force') && $models->count() > 1) {
             if (! $this->confirm('Proceed with all models?', false)) {
+                $this->info('Cancelled.');
                 return self::SUCCESS;
             }
         }
@@ -41,11 +43,15 @@ class GenerateFoundationSlugPaths extends Command
         $total = 0;
 
         foreach ($models as $modelClass) {
-            $total += $this->processModel($modelClass);
+            $total += $this->processModel($modelClass, (bool) $this->option('dry-run'));
         }
 
         $this->newLine();
-        $this->info("Done. {$total} root trees processed.");
+        $this->info("Done. {$total} record(s) processed.");
+
+        if ($this->option('dry-run')) {
+            $this->warn('Dry-run mode: no changes saved.');
+        }
 
         return self::SUCCESS;
     }
@@ -61,7 +67,7 @@ class GenerateFoundationSlugPaths extends Command
         $this->info("→ {$modelClass}");
 
         /** @var Model $instance */
-        $instance = new $modelClass;
+        $instance = new $modelClass();
 
         $parentColumn = $instance->getSlugConfig('parent');
 
@@ -120,8 +126,7 @@ class GenerateFoundationSlugPaths extends Command
         $root->syncSlugPath();
 
         if ($dryRun) {
-            $this->line("  [DRY] Root {$root->getKey()} → ".$this->getSlugPath($root));
-
+            $this->line("  [DRY] Root {$root->getKey()} → " . $this->getSlugPath($root));
             return;
         }
 
@@ -145,26 +150,23 @@ class GenerateFoundationSlugPaths extends Command
             ->filter(fn ($class) => is_subclass_of($class, Model::class))
             ->filter(fn ($class) => $this->usesSlugTrait($class));
 
-        if (! $filter) {
-            return $models->values();
+        if ($filter) {
+            $filter = Str::of($filter)->replace('/', '\\')->trim()->ltrim('\\')->toString();
+
+            if (! class_exists($filter)) {
+                $this->error("Model not found: {$filter}");
+                exit(self::FAILURE);
+            }
+
+            if (! $this->usesSlugTrait($filter)) {
+                $this->error("Model {$filter} does not use HasSlugPath trait.");
+                exit(self::FAILURE);
+            }
+
+            return collect([$filter]);
         }
 
-        $filter = Str::of($filter)
-            ->replace('/', '\\')
-            ->ltrim('\\')
-            ->toString();
-
-        if (! class_exists($filter)) {
-            $this->error("Model not found: {$filter}");
-            exit(self::FAILURE);
-        }
-
-        if (! $this->usesSlugTrait($filter)) {
-            $this->error("Model does not use CanGenerateSlugPath: {$filter}");
-            exit(self::FAILURE);
-        }
-
-        return collect([$filter]);
+        return $models;
     }
 
     protected function scanAppModels(): array
@@ -203,12 +205,63 @@ class GenerateFoundationSlugPaths extends Command
 
     /*
     |--------------------------------------------------------------------------
-    | Utilities
+    | Processing
     |--------------------------------------------------------------------------
     */
 
-    protected function getSlugPath(Model $model): string
+    protected function processModel(string $modelClass, bool $dryRun): int
     {
-        return $model->getAttribute($model->getSlugConfig('slug_path'));
+        $this->info("Processing: <fg=yellow>{$modelClass}</>");
+
+        $count = 0;
+
+        try {
+            $modelClass::query()
+                ->lazyById(200)
+                ->each(function (Model $model) use (&$count, $dryRun) {
+                    $this->processRecord($model, $dryRun);
+                    $count++;
+                });
+
+            $this->line(" → {$count} records processed");
+        } catch (Throwable $e) {
+            $this->error("Error: {$e->getMessage()}");
+
+            if ($this->output->isVerbose()) {
+                $this->line($e->getTraceAsString());
+            }
+        }
+
+        return $count;
+    }
+
+    protected function processRecord(Model $model, bool $dryRun): void
+    {
+        if (! method_exists($model, 'generateSlugPath')) {
+            return;
+        }
+
+        $column = $model->getSlugPathColumn();
+
+        $original = $model->getAttribute($column);
+
+        $model->generateSlugPath();
+
+        $updated = $model->getAttribute($column);
+
+        if ($dryRun) {
+            if ($original !== $updated) {
+                $this->line(" [DRY] {$model->getKey()} → {$updated}");
+            }
+            return;
+        }
+
+        if ($original !== $updated) {
+            $model->saveQuietly();
+
+            if (method_exists($model, 'updateDescendants')) {
+                $model->updateDescendants();
+            }
+        }
     }
 }
