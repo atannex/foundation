@@ -20,7 +20,7 @@ trait CanGenerateSlugPath
 
     protected static function bootCanGenerateSlugPath(): void
     {
-        static::creating(fn(Model $model) => $model->syncSlugPath());
+        static::creating(fn (Model $model) => $model->syncSlugPath());
 
         static::updating(function (Model $model): void {
             if ($model->isSlugRelevantDirty()) {
@@ -35,7 +35,7 @@ trait CanGenerateSlugPath
         });
 
         if (method_exists(static::class, 'restored')) {
-            static::restored(fn(Model $model) => $model->cascadeSlugPathUpdate());
+            static::restored(fn (Model $model) => $model->cascadeSlugPathUpdate());
         }
     }
 
@@ -81,7 +81,7 @@ trait CanGenerateSlugPath
         $parentPath = $parent->{$this->getSlugConfig('slug_path')}
             ?: $parent->{$this->getSlugConfig('slug')};
 
-        return trim($parentPath . '/' . $slug, '/');
+        return trim($parentPath.'/'.$slug, '/');
     }
 
     /**
