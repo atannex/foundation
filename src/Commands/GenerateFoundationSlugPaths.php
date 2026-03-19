@@ -26,6 +26,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found.');
+
             return self::SUCCESS;
         }
 
@@ -189,6 +190,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($dryRun) {
             $this->line("[DRY RUN] {$model->getKey()} → {$updated}");
+
             return 1;
         }
 
