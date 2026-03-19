@@ -83,7 +83,7 @@ trait ResolveDotValue
 
         if ($strict) {
             throw new \RuntimeException(
-                "Unable to resolve dot segment [{$key}] on model [" . get_class($model) . "]"
+                "Unable to resolve dot segment [{$key}] on model [".get_class($model).']'
             );
         }
 

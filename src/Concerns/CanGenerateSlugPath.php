@@ -31,7 +31,7 @@ trait CanGenerateSlugPath
 
         static::saved(function (Model $model): void {
             if ($model->wasChanged($model->slugPathRelevantColumns())) {
-                DB::afterCommit(fn() => $model->updateDescendants());
+                DB::afterCommit(fn () => $model->updateDescendants());
             }
         });
     }
@@ -107,7 +107,7 @@ trait CanGenerateSlugPath
         $base = $parent->{$cfg['path']} ?? $parent->{$cfg['slug']};
 
         $this->{$cfg['path']} = trim(
-            $base . $cfg['separator'] . $slug,
+            $base.$cfg['separator'].$slug,
             $cfg['separator']
         );
     }
