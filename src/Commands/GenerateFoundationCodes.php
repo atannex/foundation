@@ -32,11 +32,13 @@ class GenerateFoundationCodes extends Command
             $models = $this->resolveTargetModels();
         } catch (Throwable $e) {
             $this->error($e->getMessage());
+
             return self::FAILURE;
         }
 
         if ($models->isEmpty()) {
             $this->warn('No valid models found using CanGenerateCode trait.');
+
             return self::FAILURE;
         }
 
@@ -60,6 +62,7 @@ class GenerateFoundationCodes extends Command
 
             if (! method_exists($model, 'resolveCodeColumn')) {
                 $this->warn("Skipping {$modelClass} (invalid trait implementation)");
+
                 continue;
             }
 
