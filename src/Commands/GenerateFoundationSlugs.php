@@ -27,6 +27,7 @@ class GenerateFoundationSlugs extends Command
 
         if (empty($models)) {
             $this->warn('No models found using CanGenerateSlug trait.');
+
             return self::SUCCESS;
         }
 
@@ -52,7 +53,7 @@ class GenerateFoundationSlugs extends Command
 
         if (! empty($inputModels)) {
             return collect($inputModels)
-                ->filter(fn($class) => $this->isValidModel($class))
+                ->filter(fn ($class) => $this->isValidModel($class))
                 ->values()
                 ->all();
         }
@@ -64,16 +65,19 @@ class GenerateFoundationSlugs extends Command
     {
         if (! class_exists($class)) {
             $this->error("Invalid model: {$class}");
+
             return false;
         }
 
         if (! is_subclass_of($class, Model::class)) {
             $this->error("Not an Eloquent model: {$class}");
+
             return false;
         }
 
         if (! $this->usesSlugTrait($class)) {
             $this->warn("Skipped (missing CanGenerateSlug): {$class}");
+
             return false;
         }
 
@@ -123,9 +127,9 @@ class GenerateFoundationSlugs extends Command
 
     protected function getClassFromFile(string $path): ?string
     {
-        $relative = str_replace(app_path() . DIRECTORY_SEPARATOR, '', $path);
+        $relative = str_replace(app_path().DIRECTORY_SEPARATOR, '', $path);
 
-        return 'App\\' . str_replace(
+        return 'App\\'.str_replace(
             [DIRECTORY_SEPARATOR, '.php'],
             ['\\', ''],
             $relative
@@ -148,6 +152,7 @@ class GenerateFoundationSlugs extends Command
 
         if (! method_exists($instance, 'ensureSlug')) {
             $this->warn('Skipped (no ensureSlug method).');
+
             return;
         }
 
