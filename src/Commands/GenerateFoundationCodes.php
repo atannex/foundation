@@ -29,7 +29,7 @@ use Throwable;
  *   php artisan atannex:generate-code Invoice --force --dry-run
  *   php artisan atannex:generate-code "App\Models\Order" --chunk=500
  *
- * @see \Atannex\Foundation\Concerns\CanGenerateCode
+ * @see CanGenerateCode
  */
 class GenerateFoundationCodes extends Command
 {
@@ -55,8 +55,6 @@ class GenerateFoundationCodes extends Command
 
     /**
      * Execute the console command.
-     *
-     * @return int
      */
     public function handle(): int
     {
@@ -75,7 +73,7 @@ class GenerateFoundationCodes extends Command
         }
 
         /** @var Model $model */
-        $model = new $modelClass();
+        $model = new $modelClass;
 
         $column = $this->resolveCodeColumn($model);
 
@@ -111,10 +109,6 @@ class GenerateFoundationCodes extends Command
 
     /**
      * Process records in chunks with progress tracking.
-     *
-     * @param  Builder  $query
-     * @param  string  $column
-     * @return int
      */
     protected function process(Builder $query, string $column): int
     {
@@ -160,8 +154,6 @@ class GenerateFoundationCodes extends Command
     /**
      * Regenerate code for a single record.
      *
-     * @param  Model  $record
-     * @return void
      *
      * @throws \LogicException If model doesn't expose regenerateCode method
      */
@@ -187,25 +179,18 @@ class GenerateFoundationCodes extends Command
      * Build the query for records to process.
      *
      * Filters by null codes unless --force is specified.
-     *
-     * @param  string  $modelClass
-     * @param  string  $column
-     * @return Builder
      */
     protected function buildQuery(string $modelClass, string $column): Builder
     {
         return $modelClass::query()
             ->when(
                 ! $this->option('force'),
-                fn(Builder $query) => $query->whereNull($column)
+                fn (Builder $query) => $query->whereNull($column)
             );
     }
 
     /**
      * Determine if a model uses the CanGenerateCode trait.
-     *
-     * @param  string  $modelClass
-     * @return bool
      */
     protected function usesCodeGeneration(string $modelClass): bool
     {
@@ -223,9 +208,6 @@ class GenerateFoundationCodes extends Command
      * 1. --column option override
      * 2. $codeColumn property on model
      * 3. Default 'code'
-     *
-     * @param  Model  $model
-     * @return string
      */
     protected function resolveCodeColumn(Model $model): string
     {
@@ -240,10 +222,6 @@ class GenerateFoundationCodes extends Command
 
     /**
      * Check if a column exists on the model's table.
-     *
-     * @param  Model  $model
-     * @param  string  $column
-     * @return bool
      */
     protected function columnExists(Model $model, string $column): bool
     {
@@ -258,15 +236,10 @@ class GenerateFoundationCodes extends Command
 
     /**
      * Render a summary of the operation before confirming.
-     *
-     * @param  string  $modelClass
-     * @param  string  $column
-     * @param  int  $total
-     * @return void
      */
     protected function renderSummary(string $modelClass, string $column, int $total): void
     {
-        $this->components->info("Code generation summary:");
+        $this->components->info('Code generation summary:');
         $this->components->twoColumnDetail('Model', $modelClass);
         $this->components->twoColumnDetail('Column', $column);
         $this->components->twoColumnDetail('Records', (string) $total);
@@ -278,18 +251,14 @@ class GenerateFoundationCodes extends Command
 
     /**
      * Render the results of the operation.
-     *
-     * @param  int  $successCount
-     * @param  Collection  $failures
-     * @return int
      */
     protected function renderResults(int $successCount, Collection $failures): int
     {
-        $this->components->info("Processing completed.");
+        $this->components->info('Processing completed.');
         $this->components->twoColumnDetail('Processed', (string) $successCount);
 
         if ($failures->isNotEmpty()) {
-            $this->components->error((string) $failures->count() . " failure(s) encountered");
+            $this->components->error((string) $failures->count().' failure(s) encountered');
 
             if ($this->output->isVerbose()) {
                 $this->renderFailureDetails($failures);
@@ -313,9 +282,6 @@ class GenerateFoundationCodes extends Command
 
     /**
      * Display detailed failure information.
-     *
-     * @param  Collection  $failures
-     * @return void
      */
     protected function renderFailureDetails(Collection $failures): void
     {
@@ -324,7 +290,7 @@ class GenerateFoundationCodes extends Command
 
         foreach ($failures as $failure) {
             $this->line(sprintf(
-                "  <fg=yellow>ID %s:</> %s",
+                '  <fg=yellow>ID %s:</> %s',
                 $failure['id'],
                 $failure['error']
             ));
@@ -339,8 +305,6 @@ class GenerateFoundationCodes extends Command
 
     /**
      * Configure PHP memory limit for execution.
-     *
-     * @return void
      */
     protected function configureMemory(): void
     {
@@ -352,8 +316,8 @@ class GenerateFoundationCodes extends Command
 
         if (@ini_set('memory_limit', $limit) === false) {
             $this->components->warn(
-                "Unable to set memory limit to {$limit}. " .
-                    "Current limit: " . ini_get('memory_limit')
+                "Unable to set memory limit to {$limit}. ".
+                    'Current limit: '.ini_get('memory_limit')
             );
         }
     }
@@ -366,8 +330,6 @@ class GenerateFoundationCodes extends Command
      * 2. Common namespace prefixes (App\Models\, App\, Domain\)
      * 3. Default to App\Models\ namespace
      *
-     * @param  string  $input
-     * @return string
      *
      * @example
      * resolveModelClass('Product')  // => App\Models\Product
@@ -391,7 +353,7 @@ class GenerateFoundationCodes extends Command
         ];
 
         foreach ($namespaces as $namespace) {
-            $candidate = $namespace . $input;
+            $candidate = $namespace.$input;
 
             if (class_exists($candidate)) {
                 return $candidate;
@@ -404,9 +366,6 @@ class GenerateFoundationCodes extends Command
 
     /**
      * Terminate the command with an error message.
-     *
-     * @param  string  $message
-     * @return int
      */
     protected function failCommand(string $message): int
     {
