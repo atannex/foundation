@@ -138,10 +138,10 @@ trait CanGenerateCode
     private function buildContext(string $abbreviation): array
     {
         return [
-            'prefix'      => $this->codePrefix(),
-            'year'        => now()->format($this->yearFormat()),
-            'abbr'        => $this->normalizeAbbreviation($abbreviation),
-            'randomLen'   => $this->randomLength(),
+            'prefix' => $this->codePrefix(),
+            'year' => now()->format($this->yearFormat()),
+            'abbr' => $this->normalizeAbbreviation($abbreviation),
+            'randomLen' => $this->randomLength(),
             'maxAttempts' => $this->maxAttempts(),
         ];
     }
@@ -152,9 +152,9 @@ trait CanGenerateCode
     private function composeCode(array $context): string
     {
         return $context['prefix']
-            . $context['year']
-            . $context['abbr']
-            . $this->generateRandomDigits($context['randomLen']);
+            .$context['year']
+            .$context['abbr']
+            .$this->generateRandomDigits($context['randomLen']);
     }
 
     /**
@@ -181,7 +181,7 @@ trait CanGenerateCode
 
         $letters = collect(preg_split('/\s+/', $value))
             ->filter()
-            ->map(fn(string $word) => Str::upper(Str::substr($word, 0, 1)));
+            ->map(fn (string $word) => Str::upper(Str::substr($word, 0, 1)));
 
         return $letters
             ->take($this->abbreviationLength())
@@ -222,7 +222,7 @@ trait CanGenerateCode
             return '';
         }
 
-        $min = (int) ('1' . str_repeat('0', $length - 1));
+        $min = (int) ('1'.str_repeat('0', $length - 1));
         $max = (int) str_repeat('9', $length);
 
         return (string) random_int($min, $max);

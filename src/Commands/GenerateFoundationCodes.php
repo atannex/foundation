@@ -50,6 +50,7 @@ class GenerateFoundationCodes extends Command
 
         if ($total === 0) {
             $this->info('No records to process.');
+
             return self::SUCCESS;
         }
 
@@ -57,6 +58,7 @@ class GenerateFoundationCodes extends Command
 
         if (! $this->confirm('Proceed?', true)) {
             $this->info('Command cancelled.');
+
             return self::SUCCESS;
         }
 
@@ -77,7 +79,7 @@ class GenerateFoundationCodes extends Command
         $failures = collect();
 
         $query->chunk((int) $this->option('chunk'), function (Collection $records) use (
-            $column,
+
             &$success,
             $failures,
             $bar
@@ -130,7 +132,7 @@ class GenerateFoundationCodes extends Command
         return $modelClass::query()
             ->when(
                 ! $this->option('force'),
-                fn($q) => $q->whereNull($column)
+                fn ($q) => $q->whereNull($column)
             );
     }
 
@@ -166,8 +168,8 @@ class GenerateFoundationCodes extends Command
         $this->info("Processing model: {$model}");
         $this->line("  • Column: {$column}");
         $this->line("  • Records: {$total}");
-        $this->line("  • Force: " . ($this->option('force') ? 'YES' : 'no'));
-        $this->line("  • Dry-run: " . ($this->option('dry-run') ? 'YES' : 'no'));
+        $this->line('  • Force: '.($this->option('force') ? 'YES' : 'no'));
+        $this->line('  • Dry-run: '.($this->option('dry-run') ? 'YES' : 'no'));
         $this->newLine();
     }
 
@@ -226,7 +228,7 @@ class GenerateFoundationCodes extends Command
         ];
 
         foreach ($namespaces as $ns) {
-            $candidate = $ns . $input;
+            $candidate = $ns.$input;
 
             if (class_exists($candidate)) {
                 return $candidate;
@@ -239,6 +241,7 @@ class GenerateFoundationCodes extends Command
     protected function failCommand(string $message): int
     {
         $this->error($message);
+
         return self::FAILURE;
     }
 }
