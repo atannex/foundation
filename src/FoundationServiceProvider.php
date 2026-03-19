@@ -3,6 +3,7 @@
 namespace Atannex\Foundation;
 
 use Atannex\Foundation\Commands\FoundationCommand;
+use Atannex\Foundation\FoundationManager;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -10,16 +11,22 @@ class FoundationServiceProvider extends PackageServiceProvider
 {
     public function configurePackage(Package $package): void
     {
-        /*
-         * This class is a Package Service Provider
-         *
-         * More info: https://github.com/spatie/laravel-package-tools
-         */
         $package
-            ->name('foundation')
-            ->hasConfigFile()
-            ->hasViews()
-            ->hasMigration('create_foundation_table')
+            ->name('atannex-foundation')
+            ->hasConfigFile('foundation')
             ->hasCommand(FoundationCommand::class);
+    }
+
+    public function packageRegistered(): void
+    {
+        $this->app->singleton(FoundationManager::class, function (): FoundationManager {
+            return new FoundationManager();
+        });
+
+        $this->app->alias(FoundationManager::class, 'atannex');
+
+        if (file_exists(__DIR__ . '/../helpers.php')) {
+            require_once __DIR__ . '/../helpers.php';
+        }
     }
 }

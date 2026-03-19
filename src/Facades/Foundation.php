@@ -11,6 +11,6 @@ class Foundation extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
-        return \Atannex\Foundation\Foundation::class;
+        return \Atannex\Foundation\FoundationManager::class;
     }
 }
