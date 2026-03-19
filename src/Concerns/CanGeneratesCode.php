@@ -77,7 +77,7 @@ trait CanGenerateCode
         $column = $this->getCodeColumn();
 
         // Skip if code is already set (manual assignment or database default)
-        if (!empty($this->getAttribute($column))) {
+        if (! empty($this->getAttribute($column))) {
             return;
         }
 
@@ -97,23 +97,23 @@ trait CanGenerateCode
      */
     protected function generateUniqueCode(string $abbreviation): string
     {
-        $prefix      = $this->getCodePrefix();
-        $year        = now()->format($this->getCodeYearFormat());
-        $abbr        = $this->normalizeAbbreviation($abbreviation);
-        $randomLen   = $this->getCodeRandomDigits();
+        $prefix = $this->getCodePrefix();
+        $year = now()->format($this->getCodeYearFormat());
+        $abbr = $this->normalizeAbbreviation($abbreviation);
+        $randomLen = $this->getCodeRandomDigits();
         $maxAttempts = $this->getMaxGenerationAttempts();
 
         $attempt = 0;
 
         do {
             $randomPart = $this->generateRandomNumericString($randomLen);
-            $candidate  = $prefix . $year . $abbr . $randomPart;
+            $candidate = $prefix.$year.$abbr.$randomPart;
 
             $exists = $this->getUniquenessQuery()
                 ->where($this->getCodeColumn(), $candidate)
                 ->exists();
 
-            if (!$exists) {
+            if (! $exists) {
                 return $candidate;
             }
 
@@ -121,7 +121,7 @@ trait CanGenerateCode
         } while ($attempt < $maxAttempts);
 
         throw new RuntimeException(sprintf(
-            'Failed to generate unique code for %s after %d attempts. ' .
+            'Failed to generate unique code for %s after %d attempts. '.
                 'Prefix: %s | Year: %s | Abbr: %s | Digits: %d',
             static::class,
             $maxAttempts,
@@ -140,7 +140,7 @@ trait CanGenerateCode
         $cleaned = preg_replace('/[^A-Za-z0-9\s]/', '', $text);
         $words = collect(explode(' ', trim($cleaned)))
             ->filter()
-            ->map(static fn(string $word): string => Str::upper(Str::substr($word, 0, 1)));
+            ->map(static fn (string $word): string => Str::upper(Str::substr($word, 0, 1)));
 
         return $words->take($this->getCodeAbbreviationLength())->implode('');
     }
@@ -160,7 +160,7 @@ trait CanGenerateCode
             return '';
         }
 
-        $min = (int) ('1' . str_repeat('0', $length - 1));
+        $min = (int) ('1'.str_repeat('0', $length - 1));
         $max = (int) str_repeat('9', $length);
 
         return sprintf("%0{$length}d", random_int($min, $max));
