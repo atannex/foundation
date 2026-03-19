@@ -18,7 +18,7 @@ class GenerateFoundationSlugPaths extends Command
         {--force : Skip confirmation}
         {--chunk=200 : Chunk size for processing}';
 
-    protected $description = 'Enterprise slug_path regeneration for HasSlugPath models';
+    protected $description = 'Enterprise slug_path regeneration for CanGenerateSlugPath models';
 
     public function handle(): int
     {
@@ -26,7 +26,6 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found.');
-
             return self::SUCCESS;
         }
 
@@ -47,14 +46,12 @@ class GenerateFoundationSlugPaths extends Command
         }
 
         $total = 0;
-        $bar = null;
 
         foreach ($models as $modelClass) {
             $this->newLine();
             $this->info("Processing: <fg=yellow>{$modelClass}</>");
 
             $count = $this->processModel($modelClass);
-
             $total += $count;
 
             $this->line(" → {$count} records processed");
@@ -85,7 +82,11 @@ class GenerateFoundationSlugPaths extends Command
             ->filter(fn ($class) => in_array(CanGenerateSlugPath::class, class_uses_recursive($class)));
 
         if ($filter) {
-            $filter = Str::of($filter)->replace('/', '\\')->trim()->ltrim('\\')->toString();
+            $filter = Str::of($filter)
+                ->replace('/', '\\')
+                ->trim()
+                ->ltrim('\\')
+                ->toString();
 
             if (! class_exists($filter)) {
                 $this->error("Model not found: {$filter}");
@@ -93,7 +94,7 @@ class GenerateFoundationSlugPaths extends Command
             }
 
             if (! in_array(CanGenerateSlugPath::class, class_uses_recursive($filter))) {
-                $this->error("Model {$filter} does not use HasSlugPath.");
+                $this->error("Model {$filter} does not use CanGenerateSlugPath.");
                 exit(self::FAILURE);
             }
 
@@ -130,7 +131,7 @@ class GenerateFoundationSlugPaths extends Command
 
     /*
     |--------------------------------------------------------------------------
-    | PROCESS MODEL (BATCH + SAFE MEMORY)
+    | PROCESS MODEL
     |--------------------------------------------------------------------------
     */
 
@@ -142,13 +143,11 @@ class GenerateFoundationSlugPaths extends Command
         $total = 0;
 
         $modelClass::query()
-            ->select('*')
             ->chunkById($chunkSize, function ($models) use (&$total, $dryRun, $modelClass) {
 
                 foreach ($models as $model) {
                     try {
-                        $updated = $this->processRecord($model, $dryRun);
-                        $total += $updated;
+                        $total += $this->processRecord($model, $dryRun);
                     } catch (Throwable $e) {
                         $this->error("Error [{$modelClass} ID: {$model->getKey()}]: {$e->getMessage()}");
 
@@ -164,7 +163,7 @@ class GenerateFoundationSlugPaths extends Command
 
     /*
     |--------------------------------------------------------------------------
-    | RECORD PROCESSING (SAFE + CONFIG DRIVEN)
+    | RECORD PROCESSING (TRAIT-AWARE)
     |--------------------------------------------------------------------------
     */
 
@@ -179,6 +178,7 @@ class GenerateFoundationSlugPaths extends Command
 
         $original = $model->getAttribute($column);
 
+        // 🔥 CORE CALL (uses parent → context → fallback logic)
         $model->generateSlugPath();
 
         $updated = $model->getAttribute($column);
@@ -188,12 +188,17 @@ class GenerateFoundationSlugPaths extends Command
         }
 
         if ($dryRun) {
-            $this->line(" [DRY] {$model->getKey()} → {$updated}");
-
+            $this->line("[DRY RUN] {$model->getKey()} → {$updated}");
             return 1;
         }
 
         $model->saveQuietly();
+
+        /*
+        |--------------------------------------------------------------------------
+        | IMPORTANT: ONLY UPDATE DESCENDANTS IF MODEL IS HIERARCHICAL
+        |--------------------------------------------------------------------------
+        */
 
         if (method_exists($model, 'updateDescendants')) {
             $model->updateDescendants();
