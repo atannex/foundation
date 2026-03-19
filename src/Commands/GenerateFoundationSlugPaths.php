@@ -12,7 +12,7 @@ use Throwable;
 
 class GenerateFoundationSlugPaths extends Command
 {
-    protected $signature = 'generate:atannex-slug-paths
+    protected $signature = 'generate:atannex-slug-path
                             {model? : Optional: Process only this specific model (e.g. App\\Models\\Category)}
                             {--dry-run : Show what would be updated without saving changes}
                             {--force : Skip confirmation when processing all models}';

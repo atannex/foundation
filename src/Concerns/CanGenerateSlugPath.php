@@ -17,9 +17,9 @@ trait CanGenerateSlugPath
     |--------------------------------------------------------------------------
     */
 
-    protected static function bootCanGenerateSlugPath(): void
+    protected static function bootCanGenerateSlugPath()
     {
-        static::creating(fn (Model $model) => $model->syncSlugPath());
+        static::creating(fn(Model $model) => $model->syncSlugPath());
 
         static::updating(function (Model $model) {
             if ($model->isSlugRelevantDirty()) {
@@ -29,13 +29,12 @@ trait CanGenerateSlugPath
 
         static::updated(function (Model $model) {
             if ($model->wasSlugRelevantChanged()) {
-                DB::transaction(fn () => $model->cascadeSlugPathUpdate());
+                DB::transaction(fn() => $model->cascadeSlugPathUpdate());
             }
         });
 
-        // Optional: handle restore if using SoftDeletes
         if (method_exists(static::class, 'restored')) {
-            static::restored(fn (Model $model) => $model->cascadeSlugPathUpdate());
+            static::restored(fn(Model $model) => $model->cascadeSlugPathUpdate());
         }
     }
 
