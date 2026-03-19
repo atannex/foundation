@@ -18,7 +18,6 @@ class GenerateFoundationSlugs extends Command
 
     protected $description = 'Generate or regenerate slugs for models using CanGenerateSlug trait.';
 
-    /** @var array<class-string<Model>> */
     protected array $cachedModels = [];
 
     public function handle(): int
@@ -27,7 +26,6 @@ class GenerateFoundationSlugs extends Command
 
         if (empty($models)) {
             $this->warn('No models found using CanGenerateSlug trait.');
-
             return self::SUCCESS;
         }
 
@@ -43,17 +41,17 @@ class GenerateFoundationSlugs extends Command
 
     /*
     |--------------------------------------------------------------------------
-    | Model Resolution
+    | MODEL RESOLUTION
     |--------------------------------------------------------------------------
     */
 
     protected function resolveModels(): array
     {
-        $inputModels = (array) $this->argument('model');
+        $input = (array) $this->argument('model');
 
-        if (! empty($inputModels)) {
-            return collect($inputModels)
-                ->filter(fn ($class) => $this->isValidModel($class))
+        if (! empty($input)) {
+            return collect($input)
+                ->filter(fn($class) => $this->isValidModel($class))
                 ->values()
                 ->all();
         }
@@ -65,19 +63,15 @@ class GenerateFoundationSlugs extends Command
     {
         if (! class_exists($class)) {
             $this->error("Invalid model: {$class}");
-
             return false;
         }
 
         if (! is_subclass_of($class, Model::class)) {
             $this->error("Not an Eloquent model: {$class}");
-
             return false;
         }
 
         if (! $this->usesSlugTrait($class)) {
-            $this->warn("Skipped (missing CanGenerateSlug): {$class}");
-
             return false;
         }
 
@@ -91,13 +85,13 @@ class GenerateFoundationSlugs extends Command
         }
 
         $models = [];
-        $modelPath = app_path('Models');
+        $path = app_path('Models');
 
-        if (! is_dir($modelPath)) {
+        if (! is_dir($path)) {
             return [];
         }
 
-        foreach (File::allFiles($modelPath) as $file) {
+        foreach (File::allFiles($path) as $file) {
             $class = $this->getClassFromFile($file->getPathname());
 
             if (! $class || ! class_exists($class)) {
@@ -127,9 +121,9 @@ class GenerateFoundationSlugs extends Command
 
     protected function getClassFromFile(string $path): ?string
     {
-        $relative = str_replace(app_path().DIRECTORY_SEPARATOR, '', $path);
+        $relative = str_replace(app_path() . DIRECTORY_SEPARATOR, '', $path);
 
-        return 'App\\'.str_replace(
+        return 'App\\' . str_replace(
             [DIRECTORY_SEPARATOR, '.php'],
             ['\\', ''],
             $relative
@@ -138,7 +132,7 @@ class GenerateFoundationSlugs extends Command
 
     /*
     |--------------------------------------------------------------------------
-    | Processing
+    | PROCESSING
     |--------------------------------------------------------------------------
     */
 
@@ -147,12 +141,11 @@ class GenerateFoundationSlugs extends Command
         $this->newLine();
         $this->info("🔄 Processing: {$modelClass}");
 
-        /** @var Model&CanGenerateSlug $instance */
-        $instance = new $modelClass;
+        /** @var Model&CanGenerateSlug $model */
+        $model = new $modelClass;
 
-        if (! method_exists($instance, 'ensureSlug')) {
-            $this->warn('Skipped (no ensureSlug method).');
-
+        if (! method_exists($model, 'ensureSlug')) {
+            $this->warn('Skipped (missing ensureSlug).');
             return;
         }
 
@@ -162,30 +155,30 @@ class GenerateFoundationSlugs extends Command
 
         $processed = 0;
 
-        foreach ($query->lazyById(200) as $model) {
+        foreach ($query->lazyById(200) as $record) {
 
-            $slugColumn = $model->getSlugColumn();
+            // ✅ SINGLE CONTRACT USAGE
+            $config = $record->resolveSlugConfig();
+            $column = $config['column'];
 
-            if (! $this->option('force') && ! empty($model->{$slugColumn})) {
+            if (! $this->option('force') && ! empty($record->{$column})) {
                 continue;
             }
 
             try {
-                $model->ensureSlug();
+                $record->ensureSlug();
 
-                if ($model->isDirty($slugColumn)) {
-                    $model->save();
+                if ($record->isDirty($column)) {
+                    $record->save();
                     $processed++;
                 }
             } catch (Throwable $e) {
-                $this->error(
-                    sprintf(
-                        '[%s] ID %s failed: %s',
-                        class_basename($modelClass),
-                        $model->getKey(),
-                        $e->getMessage()
-                    )
-                );
+                $this->error(sprintf(
+                    '[%s] ID %s failed: %s',
+                    class_basename($modelClass),
+                    $record->getKey(),
+                    $e->getMessage()
+                ));
             }
         }
 
