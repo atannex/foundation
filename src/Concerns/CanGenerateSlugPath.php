@@ -18,7 +18,7 @@ trait CanGenerateSlugPath
     |--------------------------------------------------------------------------
     */
 
-    protected static function bootHasSlugPath(): void
+    protected static function bootCanGenerateSlugPath(): void
     {
         static::saving(function (Model $model): void {
             if ($model->shouldGenerateSlugPath()) {
@@ -28,14 +28,14 @@ trait CanGenerateSlugPath
 
         static::saved(function (Model $model): void {
             if ($model->wasChanged($model->slugPathRelevantColumns())) {
-                DB::afterCommit(fn () => $model->updateDescendants());
+                DB::afterCommit(fn() => $model->updateDescendants());
             }
         });
     }
 
     /*
     |--------------------------------------------------------------------------
-    | PUBLIC CONTRACT (SINGLE ENTRY POINT)
+    | CONFIG
     |--------------------------------------------------------------------------
     */
 
@@ -44,7 +44,13 @@ trait CanGenerateSlugPath
         return [
             'slug' => $this->slugColumn ?? 'slug',
             'path' => $this->slugPathColumn ?? 'slug_path',
+
+            // hierarchy (tree models)
             'parent' => $this->parentColumn ?? 'parent_id',
+
+            // context fallback (e.g. category.slug_path)
+            'context' => $this->slugPathContext ?? null,
+
             'separator' => $this->slugPathSeparator ?? '/',
         ];
     }
@@ -67,7 +73,7 @@ trait CanGenerateSlugPath
 
     /*
     |--------------------------------------------------------------------------
-    | CORE
+    | CORE GENERATION
     |--------------------------------------------------------------------------
     */
 
@@ -77,13 +83,12 @@ trait CanGenerateSlugPath
 
         $slug = $this->{$cfg['slug']} ?? null;
 
-        if (! is_string($slug) || $slug === '') {
+        if (!is_string($slug) || $slug === '') {
             throw new RuntimeException('Slug is required for slug path generation.');
         }
 
         if (! $this->{$cfg['parent']}) {
             $this->{$cfg['path']} = $slug;
-
             return;
         }
 
@@ -91,17 +96,70 @@ trait CanGenerateSlugPath
 
         if (! $parent) {
             $this->{$cfg['path']} = $slug;
-
             return;
         }
 
         $base = $parent->{$cfg['path']} ?? $parent->{$cfg['slug']};
 
         $this->{$cfg['path']} = trim(
-            $base.$cfg['separator'].$slug,
+            $base . $cfg['separator'] . $slug,
             $cfg['separator']
         );
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | BASE PATH RESOLUTION (IMPORTANT LOGIC)
+    |--------------------------------------------------------------------------
+    */
+
+    protected function resolveBasePath(array $cfg): string
+    {
+        /*
+        |-----------------------------------------
+        | 1. PARENT (HIERARCHICAL MODELS)
+        |-----------------------------------------
+        */
+
+        if (!empty($cfg['parent'])) {
+            $parent = $this->getParentForPath();
+
+            if ($parent) {
+                return $parent->{$cfg['path']}
+                    ?? $parent->{$cfg['slug']}
+                    ?? '';
+            }
+        }
+
+        /*
+        |-----------------------------------------
+        | 2. CONTEXT (RELATIONAL MODELS)
+        |-----------------------------------------
+        | Example: category.slug_path
+        */
+
+        if (!empty($cfg['context'])) {
+            $contextValue = $this->resolveDotValue($cfg['context']);
+
+            if (!empty($contextValue)) {
+                return $contextValue;
+            }
+        }
+
+        /*
+        |-----------------------------------------
+        | 3. FALLBACK (STANDALONE)
+        |-----------------------------------------
+        */
+
+        return '';
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | DESCENDANT UPDATES
+    |--------------------------------------------------------------------------
+    */
 
     public function updateDescendants(): void
     {
@@ -129,14 +187,22 @@ trait CanGenerateSlugPath
         $current = $this;
 
         while ($current) {
-            if (in_array($current->getKey(), $visited, true)) {
+            $key = $current->getKey();
+
+            if ($key && in_array($key, $visited, true)) {
                 throw new RuntimeException('Circular hierarchy detected.');
             }
 
-            $visited[] = $current->getKey();
+            $visited[] = $key;
             $current = $current->getParentForPath();
         }
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | RULES
+    |--------------------------------------------------------------------------
+    */
 
     protected function shouldGenerateSlugPath(): bool
     {
@@ -145,10 +211,11 @@ trait CanGenerateSlugPath
 
     protected function slugPathRelevantColumns(): array
     {
-        return [
+        return array_filter([
             $this->cfg('slug'),
             $this->cfg('parent'),
-        ];
+            $this->slugPathContext ?? null,
+        ]);
     }
 
     /*
@@ -159,11 +226,11 @@ trait CanGenerateSlugPath
 
     protected function getParentForPath(): ?Model
     {
-        if ($this->relationLoaded('parent')) {
-            return $this->parent;
-        }
-
         $cfg = $this->resolveSlugPathConfig();
+
+        if (!$this->relationLoaded('parent') && $this->{$cfg['parent']} === null) {
+            return null;
+        }
 
         return $this->parent()
             ->withoutGlobalScopes()
@@ -176,8 +243,29 @@ trait CanGenerateSlugPath
             ->first();
     }
 
+    protected function resolveDotValue(string $path): string
+    {
+        $segments = explode('.', $path);
+
+        $value = $this;
+
+        foreach ($segments as $segment) {
+            if (is_object($value)) {
+                $value = $value->{$segment} ?? null;
+            } else {
+                return '';
+            }
+
+            if ($value === null) {
+                return '';
+            }
+        }
+
+        return (string) $value;
+    }
+
     protected function cfg(string $key): mixed
     {
-        return $this->resolveSlugPathConfig()[$key];
+        return $this->resolveSlugPathConfig()[$key] ?? null;
     }
 }
