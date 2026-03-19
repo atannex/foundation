@@ -6,6 +6,7 @@ use Atannex\Foundation\Concerns\CanGenerateSlugPath;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Throwable;
@@ -13,118 +14,180 @@ use Throwable;
 class GenerateFoundationSlugPaths extends Command
 {
     protected $signature = 'generate:atannex-slug-path
-                            {model? : Optional: Process only this specific model (e.g. App\\Models\\Category)}
-                            {--dry-run : Show what would be updated without saving changes}
-                            {--force : Skip confirmation when processing all models}';
+        {model? : Optional model (e.g. App\\Models\\Category)}
+        {--dry-run : Preview changes without saving}
+        {--force : Skip confirmation}';
 
-    protected $description = 'Regenerate slug_path for all (or selected) models that use the CanGenerateSlugPath trait';
+    protected $description = 'Efficiently regenerate slug paths for models using CanGenerateSlugPath';
 
     public function handle(): int
     {
         $models = $this->resolveModelsToProcess();
 
         if ($models->isEmpty()) {
-            $this->warn('No models found using CanGenerateSlugPath trait.');
-
+            $this->warn('No models found using CanGenerateSlugPath.');
             return self::SUCCESS;
         }
 
-        $this->newLine();
-        $this->info("Found {$models->count()} model(s) with slug path support:");
-
-        foreach ($models as $modelClass) {
-            $this->line("  • {$modelClass}");
-        }
+        $this->info("Processing {$models->count()} model(s)...");
 
         if (! $this->option('dry-run') && ! $this->option('force') && $models->count() > 1) {
-            if (! $this->confirm('Do you want to regenerate slug paths for ALL these models?', false)) {
-                $this->info('Command cancelled.');
-
+            if (! $this->confirm('Proceed with all models?', false)) {
                 return self::SUCCESS;
             }
         }
 
-        $dryRun = $this->option('dry-run');
-        $totalUpdated = 0;
+        $total = 0;
 
         foreach ($models as $modelClass) {
-            $updated = $this->processModel($modelClass, $dryRun);
-            $totalUpdated += $updated;
-        }
-
-        if ($dryRun) {
-            $this->newLine();
-            $this->warn('Dry run — no changes were actually saved.');
+            $total += $this->processModel($modelClass);
         }
 
         $this->newLine();
-        $this->info("Completed. {$totalUpdated} record(s) processed/updated.");
+        $this->info("Done. {$total} root trees processed.");
 
         return self::SUCCESS;
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Core Processing (Optimized)
+    |--------------------------------------------------------------------------
+    */
+
+    protected function processModel(string $modelClass): int
+    {
+        $this->info("→ {$modelClass}");
+
+        /** @var Model $instance */
+        $instance = new $modelClass();
+
+        $parentColumn = $instance->getSlugConfig('parent');
+
+        $dryRun = $this->option('dry-run');
+
+        $count = 0;
+
+        try {
+            DB::transaction(function () use (
+                $modelClass,
+                $parentColumn,
+                &$count,
+                $dryRun
+            ) {
+                // ✅ Only process ROOT nodes
+                $roots = $modelClass::query()
+                    ->whereNull($parentColumn)
+                    ->orWhere($parentColumn, 0);
+
+                $totalRoots = $roots->count();
+
+                $bar = $this->output->createProgressBar($totalRoots);
+                $bar->start();
+
+                $roots->lazyById()->each(function (Model $root) use (&$count, $dryRun, $bar) {
+                    $this->processTree($root, $dryRun);
+                    $count++;
+                    $bar->advance();
+                });
+
+                $bar->finish();
+            });
+
+            $this->newLine();
+            $this->line("  ✓ {$count} root tree(s) processed");
+        } catch (Throwable $e) {
+            $this->error("  ✗ Failed: {$e->getMessage()}");
+
+            if ($this->output->isVerbose()) {
+                $this->line($e->getTraceAsString());
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Process full tree from root (single cascade only)
+     */
+    protected function processTree(Model $root, bool $dryRun): void
+    {
+        if (! method_exists($root, 'syncSlugPath')) {
+            return;
+        }
+
+        $root->syncSlugPath();
+
+        if ($dryRun) {
+            $this->line("  [DRY] Root {$root->getKey()} → " . $this->getSlugPath($root));
+            return;
+        }
+
+        $root->saveQuietly();
+
+        // ✅ ONE cascade per tree (critical optimization)
+        $root->cascadeSlugPathUpdate();
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Model Resolution
+    |--------------------------------------------------------------------------
+    */
 
     protected function resolveModelsToProcess(): Collection
     {
         $filter = $this->argument('model');
 
-        $allModels = collect($this->scanAppModels())
-            ->filter(fn ($class) => is_subclass_of($class, Model::class))
-            ->filter(fn ($class) => $this->usesSlugTrait($class));
+        $models = collect($this->scanAppModels())
+            ->filter(fn($class) => is_subclass_of($class, Model::class))
+            ->filter(fn($class) => $this->usesSlugTrait($class));
 
-        if ($filter) {
-            // Normalize input (App\Models\Category → App\Models\Category)
-            $filter = Str::of($filter)
-                ->trim()
-                ->replace('/', '\\')
-                ->ltrim('\\')
-                ->toString();
-
-            if (! class_exists($filter)) {
-                $this->error("Model not found: {$filter}");
-                exit(self::FAILURE);
-            }
-
-            if (! $this->usesSlugTrait($filter)) {
-                $this->error("Model {$filter} does not use CanGenerateSlugPath trait.");
-                exit(self::FAILURE);
-            }
-
-            return collect([$filter]);
+        if (! $filter) {
+            return $models->values();
         }
 
-        return $allModels;
+        $filter = Str::of($filter)
+            ->replace('/', '\\')
+            ->ltrim('\\')
+            ->toString();
+
+        if (! class_exists($filter)) {
+            $this->error("Model not found: {$filter}");
+            exit(self::FAILURE);
+        }
+
+        if (! $this->usesSlugTrait($filter)) {
+            $this->error("Model does not use CanGenerateSlugPath: {$filter}");
+            exit(self::FAILURE);
+        }
+
+        return collect([$filter]);
     }
 
     protected function scanAppModels(): array
     {
-        $path = app_path();
-        $files = File::allFiles($path);
-
-        $classes = [];
-
-        foreach ($files as $file) {
-            $class = $this->getClassFromFile($file->getPathname());
-            if ($class && class_exists($class)) {
-                $classes[] = $class;
-            }
-        }
-
-        return $classes;
+        return collect(File::allFiles(app_path()))
+            ->map(fn($file) => $this->getClassFromFile($file->getPathname()))
+            ->filter()
+            ->filter(fn($class) => class_exists($class))
+            ->values()
+            ->all();
     }
 
     protected function getClassFromFile(string $file): ?string
     {
         $content = File::get($file);
 
-        if (! preg_match('/namespace\s+([^;]+);/i', $content, $ns)) {
+        if (! preg_match('/namespace\s+([^;]+);/', $content, $ns)) {
             return null;
         }
 
-        if (! preg_match('/class\s+(\w+)/i', $content, $classMatch)) {
+        if (! preg_match('/class\s+(\w+)/', $content, $class)) {
             return null;
         }
 
-        return trim($ns[1].'\\'.$classMatch[1]);
+        return $ns[1] . '\\' . $class[1];
     }
 
     protected function usesSlugTrait(string $class): bool
@@ -136,53 +199,14 @@ class GenerateFoundationSlugPaths extends Command
         );
     }
 
-    protected function processModel(string $modelClass, bool $dryRun = false): int
+    /*
+    |--------------------------------------------------------------------------
+    | Utilities
+    |--------------------------------------------------------------------------
+    */
+
+    protected function getSlugPath(Model $model): string
     {
-        $this->info("Processing model: <fg=yellow>{$modelClass}</>");
-
-        $count = 0;
-
-        try {
-            $modelClass::query()
-                ->lazyById(150) // more memory-friendly than chunkById in many cases
-                ->each(function (Model $model) use (&$count, $dryRun) {
-                    $this->syncAndCascade($model, $dryRun);
-                    $count++;
-                });
-
-            $this->line("  → {$count} record(s) processed");
-        } catch (Throwable $e) {
-            $this->error("Error processing {$modelClass}: ".$e->getMessage());
-            if ($this->output->isVerbose()) {
-                $this->line($e->getTraceAsString());
-            }
-        }
-
-        return $count;
-    }
-
-    protected function syncAndCascade(Model $model, bool $dryRun): void
-    {
-        // Make sure the trait is actually present (defensive)
-        if (! method_exists($model, 'syncSlugPath')) {
-            return;
-        }
-
-        // Recompute slug path based on current slug + parent
-        $model->syncSlugPath();
-
-        if ($dryRun) {
-            $this->line("  [DRY] Would update: {$model->getKey()} → {$model->getAttribute($model->getSlugConfig('slug_path'))}");
-
-            return;
-        }
-
-        // Save without firing events (prevents loops)
-        $model->saveQuietly();
-
-        // If parent or slug changed → cascade to children
-        if (method_exists($model, 'cascadeSlugPathUpdate')) {
-            $model->cascadeSlugPathUpdate();
-        }
+        return $model->getAttribute($model->getSlugConfig('slug_path'));
     }
 }
