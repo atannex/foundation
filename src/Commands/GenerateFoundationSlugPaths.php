@@ -2,66 +2,129 @@
 
 namespace Atannex\Foundation\Commands;
 
-use App\Models\Posts\Post;
+use Atannex\Foundation\Concerns\CanGenerateSlugPath;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\File;
 
 class GenerateFoundationSlugPaths extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
-    protected $signature = 'generate:atannex-slug-path';
+    protected $signature = 'generate:atannex-slug-path {model?}';
 
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
-    protected $description = 'Generate slug_path for all posts, force updating if necessary';
+    protected $description = 'Generate slug-path for all models using CanGenerateSlugPath trait';
 
-    /**
-     * Execute the console command.
-     */
-    public function handle()
+    public function handle(): void
     {
-        $this->info('Starting slug_path generation for posts...');
+        $models = $this->resolveModels();
 
-        Post::with('category', 'tags')->chunk(50, function ($posts) {
-            foreach ($posts as $post) {
-                $base = $post->getSlugBase() ?? '';
-                $newSlugPath = trim($base.'/'.$post->slug, '/');
+        if ($models->isEmpty()) {
+            $this->warn('No models found using CanGenerateSlugPath trait.');
+            return;
+        }
 
-                // Force update by checking uniqueness and appending counter if needed
-                $post->slug_path = $this->generateUniqueSlugPath($post, $newSlugPath);
-
-                $post->saveQuietly();
-
-                // Update related tags' slug_paths
-                $post->cascadeSlugPathUpdates();
-            }
-        });
+        foreach ($models as $modelClass) {
+            $this->processModel($modelClass);
+        }
 
         $this->info('Slug path generation completed successfully.');
     }
 
-    /**
-     * Generate a unique slug path, force updating if necessary.
-     */
-    protected function generateUniqueSlugPath(Post $post, string $slugPath): string
-    {
-        $original = $slugPath;
-        $counter = 1;
+    /*
+    |--------------------------------------------------------------------------
+    | Model Resolver
+    |--------------------------------------------------------------------------
+    */
 
-        while (Post::where('slug_path', $slugPath)
-            ->where('id', '!=', $post->id)
-            ->exists()
-        ) {
-            $slugPath = $original.'-'.$counter;
-            $counter++;
+    protected function resolveModels()
+    {
+        $filter = $this->argument('model');
+
+        return collect($this->scanAppModels())
+            ->filter(fn ($model) => is_subclass_of($model, Model::class))
+            ->filter(fn ($model) => $this->usesSlugTrait($model))
+            ->when($filter, fn ($c) => $c->filter(fn ($m) => $m === $filter));
+    }
+
+    protected function scanAppModels(): array
+    {
+        $path = app_path();
+
+        $files = File::allFiles($path);
+
+        $classes = [];
+
+        foreach ($files as $file) {
+            $class = $this->getClassFromFile($file->getPathname());
+
+            if ($class) {
+                $classes[] = $class;
+            }
         }
 
-        return $slugPath;
+        return $classes;
+    }
+
+    protected function getClassFromFile(string $file): ?string
+    {
+        $content = file_get_contents($file);
+
+        if (! preg_match('/namespace\s+(.+?);/', $content, $ns)) {
+            return null;
+        }
+
+        if (! preg_match('/class\s+(\w+)/', $content, $class)) {
+            return null;
+        }
+
+        return $ns[1].'\\'.$class[1];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Trait Detection
+    |--------------------------------------------------------------------------
+    */
+
+    protected function usesSlugTrait(string $class): bool
+    {
+        $traits = class_uses_recursive($class);
+
+        return in_array(
+            CanGenerateSlugPath::class,
+            $traits
+        );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Processing
+    |--------------------------------------------------------------------------
+    */
+
+    protected function processModel(string $modelClass): void
+    {
+        $this->info("Processing: {$modelClass}");
+
+        /** @var Model $modelClass */
+        $modelClass::query()
+            ->chunkById(100, function ($items) use ($modelClass) {
+                foreach ($items as $model) {
+                    $this->syncModelSlugPath($model);
+                }
+            });
+    }
+
+    protected function syncModelSlugPath(Model $model): void
+    {
+        if (! method_exists($model, 'syncSlugPath')) {
+            return;
+        }
+
+        $model->syncSlugPath();
+        $model->saveQuietly();
+
+        if (method_exists($model, 'cascadeSlugPathUpdate')) {
+            $model->cascadeSlugPathUpdate();
+        }
     }
 }
