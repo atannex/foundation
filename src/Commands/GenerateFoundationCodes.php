@@ -17,44 +17,53 @@ class GenerateFoundationCodes extends Command
 {
     protected $signature = 'atannex:generate-code
         {model? : Model class (optional). If omitted, all models using the trait will be processed}
-        {--force : Regenerate codes even if they already exist}
+        {--force : Regenerate existing codes}
         {--dry-run : Do not persist changes}
-        {--chunk=200 : Chunk size}
+        {--chunk=200 : Records per batch}
         {--memory-limit=512M : PHP memory limit}';
 
-    protected $description = 'Generate codes for any model using CanGenerateCode trait';
+    protected $description = 'Generate codes for models using CanGenerateCode trait';
 
     public function handle(): int
     {
         $this->setMemoryLimit((string) $this->option('memory-limit'));
 
-        $models = $this->resolveTargetModels();
+        try {
+            $models = $this->resolveTargetModels();
+        } catch (Throwable $e) {
+            $this->error($e->getMessage());
+            return self::FAILURE;
+        }
 
         if ($models->isEmpty()) {
             $this->warn('No valid models found using CanGenerateCode trait.');
-
             return self::FAILURE;
         }
 
         $this->info('Processing models:');
-        foreach ($models as $modelClass) {
-            $this->line("  • {$modelClass}");
+        foreach ($models as $model) {
+            $this->line("  • {$model}");
         }
 
         $this->newLine();
 
         $dryRun = (bool) $this->option('dry-run');
         $force = (bool) $this->option('force');
-        $chunkSize = (int) $this->option('chunk');
+        $chunkSize = max(1, (int) $this->option('chunk'));
 
         $totalSuccess = 0;
-        $totalFailures = collect();
+        $failures = collect();
 
         foreach ($models as $modelClass) {
             /** @var Model&CanGenerateCode $model */
             $model = new $modelClass;
 
-            $codeColumn = $model->getCodeColumn();
+            if (! method_exists($model, 'resolveCodeColumn')) {
+                $this->warn("Skipping {$modelClass} (invalid trait implementation)");
+                continue;
+            }
+
+            $codeColumn = $model->resolveCodeColumn();
 
             if (! $this->columnExists($model, $codeColumn)) {
                 $this->warn("Skipping {$modelClass} (missing column: {$codeColumn})");
@@ -82,7 +91,7 @@ class GenerateFoundationCodes extends Command
                 $dryRun,
                 $bar,
                 &$totalSuccess,
-                $totalFailures
+                $failures
             ) {
                 foreach ($records as $record) {
                     try {
@@ -100,7 +109,7 @@ class GenerateFoundationCodes extends Command
                     } catch (Throwable $e) {
                         DB::rollBack();
 
-                        $totalFailures->push([
+                        $failures->push([
                             'model' => get_class($record),
                             'id' => $record->getKey(),
                             'error' => $e->getMessage(),
@@ -117,13 +126,15 @@ class GenerateFoundationCodes extends Command
 
         $this->info("Total Success: {$totalSuccess}");
 
-        if ($totalFailures->isNotEmpty()) {
-            $this->error("Failures: {$totalFailures->count()}");
+        if ($failures->isNotEmpty()) {
+            $this->error("Failures: {$failures->count()}");
 
             if ($this->output->isVerbose()) {
-                foreach ($totalFailures as $fail) {
+                foreach ($failures as $fail) {
                     $this->line("{$fail['model']}#{$fail['id']} → {$fail['error']}");
                 }
+            } else {
+                $this->line('Run with -v for detailed errors.');
             }
         }
 
@@ -131,16 +142,15 @@ class GenerateFoundationCodes extends Command
             $this->comment('Dry-run completed. No data persisted.');
         }
 
-        return $totalFailures->isEmpty()
+        return $failures->isEmpty()
             ? self::SUCCESS
             : self::FAILURE;
     }
 
-    /**
-     * Resolve models:
-     * - Single model if provided
-     * - Otherwise scan all models using trait
-     */
+    /* -----------------------------------------------------------------
+     |  MODEL RESOLUTION
+     |-----------------------------------------------------------------*/
+
     protected function resolveTargetModels(): Collection
     {
         $input = $this->argument('model');
@@ -159,7 +169,6 @@ class GenerateFoundationCodes extends Command
             return collect([$class]);
         }
 
-        // AUTO-DISCOVER MODELS (App\Models)
         return collect($this->discoverModels(app_path('Models')))
             ->filter(fn ($class) => $this->usesTrait($class))
             ->values();
@@ -187,6 +196,10 @@ class GenerateFoundationCodes extends Command
             true
         );
     }
+
+    /* -----------------------------------------------------------------
+     |  UTILITIES
+     |-----------------------------------------------------------------*/
 
     protected function columnExists(Model $model, string $column): bool
     {

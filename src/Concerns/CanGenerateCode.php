@@ -10,6 +10,9 @@ use RuntimeException;
 
 trait CanGenerateCode
 {
+    /**
+     * Boot the trait.
+     */
     protected static function bootCanGenerateCode(): void
     {
         static::creating(static function (Model $model): void {
@@ -17,6 +20,31 @@ trait CanGenerateCode
             $model->applyGeneratedCode();
         });
     }
+
+    /* -----------------------------------------------------------------
+     |  PUBLIC ACCESSORS (Used by Commands / External Systems)
+     |-----------------------------------------------------------------*/
+
+    public function resolveCodeColumn(): string
+    {
+        return $this->getCodeColumn();
+    }
+
+    public function resolveCodeConfig(): array
+    {
+        return [
+            'column' => $this->getCodeColumn(),
+            'source' => $this->getCodeSourceColumn(),
+            'prefix' => $this->getCodePrefix(),
+            'year_format' => $this->getCodeYearFormat(),
+            'abbr_length' => $this->getCodeAbbreviationLength(),
+            'random_length' => $this->getCodeRandomDigits(),
+        ];
+    }
+
+    /* -----------------------------------------------------------------
+     |  CONFIGURATION (Override in Model if needed)
+     |-----------------------------------------------------------------*/
 
     protected function getCodeColumn(): string
     {
@@ -53,20 +81,30 @@ trait CanGenerateCode
         return max(1, (int) ($this->codeMaxAttempts ?? 12));
     }
 
+    /**
+     * Override this if you want scoped uniqueness (multi-tenant, etc.)
+     */
     protected function getUniquenessQuery(): Builder
     {
         return $this->newQuery();
     }
 
+    /* -----------------------------------------------------------------
+     |  CORE LOGIC
+     |-----------------------------------------------------------------*/
+
     public function applyGeneratedCode(): void
     {
         $column = $this->getCodeColumn();
 
+        // Skip if already set
         if (! empty($this->getAttribute($column))) {
             return;
         }
 
-        $sourceValue = (string) $this->getAttribute($this->getCodeSourceColumn());
+        $sourceValue = (string) $this->getAttribute(
+            $this->getCodeSourceColumn()
+        );
 
         $abbreviation = $this->createAbbreviation($sourceValue);
 
@@ -94,7 +132,9 @@ trait CanGenerateCode
                 .$abbr
                 .$this->generateRandomNumericString($randomLength);
 
-            if (! $this->getUniquenessQuery()->where($column, $candidate)->exists()) {
+            if (! $this->getUniquenessQuery()
+                ->where($column, $candidate)
+                ->exists()) {
                 return $candidate;
             }
         }
@@ -106,12 +146,16 @@ trait CanGenerateCode
         ));
     }
 
+    /* -----------------------------------------------------------------
+     |  HELPERS
+     |-----------------------------------------------------------------*/
+
     protected function createAbbreviation(string $text): string
     {
         $text = trim(preg_replace('/[^A-Za-z0-9\s]/', '', $text) ?? '');
 
         if ($text === '') {
-            return 'XX'; // safe fallback
+            return 'XX';
         }
 
         $words = preg_split('/\s+/', $text) ?: [];
@@ -139,19 +183,18 @@ trait CanGenerateCode
 
         $abbr = strtoupper(substr($abbr, 0, $length));
 
-        return str_pad($abbr, $length, 'X'); // guarantees fixed length
+        return str_pad($abbr, $length, 'X');
     }
 
     protected function generateRandomNumericString(int $length): string
     {
-        // Avoid integer overflow for large lengths
         $result = '';
 
         for ($i = 0; $i < $length; $i++) {
             $result .= (string) random_int(0, 9);
         }
 
-        // Prevent leading zero for multi-digit numbers
+        // Prevent leading zero for better readability
         if ($length > 1 && $result[0] === '0') {
             $result[0] = (string) random_int(1, 9);
         }
