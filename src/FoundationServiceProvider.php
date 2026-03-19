@@ -2,7 +2,7 @@
 
 namespace Atannex\Foundation;
 
-use Atannex\Foundation\Commands\FoundationCommand;
+use Atannex\Foundation\Commands\GenerateFoundationCodes;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -13,7 +13,7 @@ class FoundationServiceProvider extends PackageServiceProvider
         $package
             ->name('atannex-foundation')
             ->hasConfigFile('foundation')
-            ->hasCommand(FoundationCommand::class);
+            ->hasCommand(GenerateFoundationCodes::class);
     }
 
     public function packageRegistered(): void
