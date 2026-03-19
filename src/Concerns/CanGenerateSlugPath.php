@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 trait CanGenerateSlugPath
 {
@@ -17,24 +18,24 @@ trait CanGenerateSlugPath
     |--------------------------------------------------------------------------
     */
 
-    protected static function bootCanGenerateSlugPath()
+    protected static function bootCanGenerateSlugPath(): void
     {
-        static::creating(fn (Model $model) => $model->syncSlugPath());
+        static::creating(fn(Model $model) => $model->syncSlugPath());
 
-        static::updating(function (Model $model) {
+        static::updating(function (Model $model): void {
             if ($model->isSlugRelevantDirty()) {
                 $model->syncSlugPath();
             }
         });
 
-        static::updated(function (Model $model) {
+        static::updated(function (Model $model): void {
             if ($model->wasSlugRelevantChanged()) {
                 DB::transaction(fn () => $model->cascadeSlugPathUpdate());
             }
         });
 
         if (method_exists(static::class, 'restored')) {
-            static::restored(fn (Model $model) => $model->cascadeSlugPathUpdate());
+            static::restored(fn(Model $model) => $model->cascadeSlugPathUpdate());
         }
     }
 
@@ -63,16 +64,13 @@ trait CanGenerateSlugPath
     protected function syncSlugPath(): void
     {
         $this->ensureSlugExists();
+
         $this->{$this->getSlugConfig('slug_path')} = $this->buildSlugPath();
     }
 
     protected function buildSlugPath(): string
     {
-        $slug = $this->{$this->getSlugConfig('slug')};
-
-        if (! $this->{$this->getSlugConfig('parent')}) {
-            return $slug;
-        }
+        $slug = (string) $this->{$this->getSlugConfig('slug')};
 
         $parent = $this->getParentForSlug();
 
@@ -80,30 +78,47 @@ trait CanGenerateSlugPath
             return $slug;
         }
 
-        $parentSlugPath = $parent->{$this->getSlugConfig('slug_path')}
+        $parentPath = $parent->{$this->getSlugConfig('slug_path')}
             ?: $parent->{$this->getSlugConfig('slug')};
 
-        return trim("{$parentSlugPath}/{$slug}", '/');
+        return trim($parentPath . '/' . $slug, '/');
     }
 
+    /**
+     * Cascade update using iterative breadth-first approach.
+     */
     protected function cascadeSlugPathUpdate(): void
     {
         $this->refresh();
 
-        $this->updateDescendants();
-        $this->afterSlugPathUpdated();
-    }
+        $queue = [$this];
+        $visited = [];
 
-    protected function updateDescendants(): void
-    {
-        $this->loadMissing('children');
+        while (! empty($queue)) {
+            /** @var Model $node */
+            $node = array_shift($queue);
 
-        foreach ($this->children as $child) {
-            $child->syncSlugPath();
-            $child->saveQuietly(); // Avoids firing events again
-            $child->updateDescendants();
-            $child->afterSlugPathUpdated();
+            if (in_array($node->getKey(), $visited, true)) {
+                throw new RuntimeException('Circular hierarchy detected in slug tree.');
+            }
+
+            $visited[] = $node->getKey();
+
+            $node->loadMissing('children');
+
+            foreach ($node->children as $child) {
+                $child->syncSlugPath();
+
+                // Save quietly to avoid infinite event loops
+                $child->saveQuietly();
+
+                $queue[] = $child;
+
+                $child->afterSlugPathUpdated();
+            }
         }
+
+        $this->afterSlugPathUpdated();
     }
 
     /*
@@ -114,8 +129,6 @@ trait CanGenerateSlugPath
 
     protected function getParentForSlug(): ?Model
     {
-        $parentColumn = $this->getSlugConfig('parent');
-
         if ($this->relationLoaded('parent')) {
             return $this->parent;
         }
@@ -123,7 +136,7 @@ trait CanGenerateSlugPath
         return $this->parent()
             ->withoutGlobalScopes()
             ->select([
-                'id',
+                $this->getKeyName(),
                 $this->getSlugConfig('slug'),
                 $this->getSlugConfig('slug_path'),
             ])
@@ -152,9 +165,8 @@ trait CanGenerateSlugPath
     |--------------------------------------------------------------------------
     */
 
-    /**
-     * Override this method in your model if you want custom column names.
-     */
+    protected array $slugConfigCache = [];
+
     public function resolveSlugConfig(): array
     {
         return [
@@ -164,22 +176,23 @@ trait CanGenerateSlugPath
         ];
     }
 
-    /**
-     * Helper to access config values safely.
-     */
     protected function getSlugConfig(string $key): string
     {
-        $config = $this->resolveSlugConfig();
-
-        if (! array_key_exists($key, $config)) {
-            throw new \RuntimeException("Missing slug config key: '$key'");
+        if (empty($this->slugConfigCache)) {
+            $this->slugConfigCache = $this->resolveSlugConfig();
         }
 
-        if (! is_string($config[$key]) || trim($config[$key]) === '') {
-            throw new \RuntimeException("Invalid column name for key '$key' in resolveSlugConfig()");
+        if (! array_key_exists($key, $this->slugConfigCache)) {
+            throw new RuntimeException("Missing slug config key: '{$key}'");
         }
 
-        return $config[$key];
+        $value = $this->slugConfigCache[$key];
+
+        if (! is_string($value) || trim($value) === '') {
+            throw new RuntimeException("Invalid column name for key '{$key}'");
+        }
+
+        return $value;
     }
 
     /*
@@ -192,9 +205,9 @@ trait CanGenerateSlugPath
     {
         $slugColumn = $this->getSlugConfig('slug');
 
-        if (! isset($this->{$slugColumn})) {
-            throw new \RuntimeException(sprintf(
-                'Model [%s] requires "%s" attribute for slug generation.',
+        if (! isset($this->{$slugColumn}) || $this->{$slugColumn} === '') {
+            throw new RuntimeException(sprintf(
+                'Model [%s] requires non-empty "%s" for slug generation.',
                 static::class,
                 $slugColumn
             ));
@@ -209,6 +222,6 @@ trait CanGenerateSlugPath
 
     protected function afterSlugPathUpdated(): void
     {
-        // Extend if needed
+        // Override in model if needed
     }
 }
