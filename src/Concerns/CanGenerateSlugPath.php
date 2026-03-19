@@ -83,6 +83,7 @@ trait CanGenerateSlugPath
 
         if (! $this->{$cfg['parent']}) {
             $this->{$cfg['path']} = $slug;
+
             return;
         }
 
@@ -90,13 +91,14 @@ trait CanGenerateSlugPath
 
         if (! $parent) {
             $this->{$cfg['path']} = $slug;
+
             return;
         }
 
         $base = $parent->{$cfg['path']} ?? $parent->{$cfg['slug']};
 
         $this->{$cfg['path']} = trim(
-            $base . $cfg['separator'] . $slug,
+            $base.$cfg['separator'].$slug,
             $cfg['separator']
         );
     }
