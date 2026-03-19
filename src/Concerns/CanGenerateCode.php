@@ -12,13 +12,13 @@ trait CanGenerateCode
 {
     protected static function bootCanGenerateCode(): void
     {
-        static::creating(fn(Model $model) => $model->applyGeneratedCode());
+        static::creating(fn (Model $model) => $model->applyGeneratedCode());
 
-        static::updating(fn(Model $model) => $model->handleCodeOnUpdate());
+        static::updating(fn (Model $model) => $model->handleCodeOnUpdate());
 
-        static::restoring(fn(Model $model) => $model->handleCodeOnRestore());
+        static::restoring(fn (Model $model) => $model->handleCodeOnRestore());
 
-        static::deleting(fn(Model $model) => $model->handleCodeOnDelete());
+        static::deleting(fn (Model $model) => $model->handleCodeOnDelete());
     }
 
     /* -----------------------------------------------------------------
@@ -185,7 +185,7 @@ trait CanGenerateCode
         }
 
         throw new RuntimeException(
-            "Failed to generate unique code for " . static::class
+            'Failed to generate unique code for '.static::class
         );
     }
 
@@ -217,25 +217,30 @@ trait CanGenerateCode
             if ($value instanceof Model) {
                 if ($value->relationLoaded($segment)) {
                     $value = $value->getRelation($segment);
+
                     continue;
                 }
 
                 if (method_exists($value, $segment)) {
                     $value = $value->$segment;
+
                     continue;
                 }
 
                 $value = $value->getAttribute($segment);
+
                 continue;
             }
 
             if (is_array($value)) {
                 $value = $value[$segment] ?? null;
+
                 continue;
             }
 
             if (is_object($value)) {
                 $value = $value->{$segment} ?? null;
+
                 continue;
             }
 
