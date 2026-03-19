@@ -16,7 +16,7 @@ class FoundationServiceProvider extends PackageServiceProvider
             ->hasConfigFile('foundation')
             ->hasCommands([
                 GenerateFoundationCodes::class,
-                GenerateFoundationSlugs::class
+                GenerateFoundationSlugs::class,
             ]);
     }
 
@@ -28,8 +28,8 @@ class FoundationServiceProvider extends PackageServiceProvider
 
         $this->app->alias(FoundationManager::class, 'atannex');
 
-        if (file_exists(__DIR__ . '/../helpers.php')) {
-            require_once __DIR__ . '/../helpers.php';
+        if (file_exists(__DIR__.'/../helpers.php')) {
+            require_once __DIR__.'/../helpers.php';
         }
     }
 }
