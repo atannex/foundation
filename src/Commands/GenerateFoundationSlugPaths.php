@@ -13,46 +13,57 @@ use Throwable;
 class GenerateFoundationSlugPaths extends Command
 {
     protected $signature = 'generate:atannex-slug-path
-        {model? : Optional model (e.g. App\\Models\\Category)}
-        {--dry-run : Preview only, no database changes}
-        {--force : Skip confirmation}';
+        {model? : Optional model class}
+        {--dry-run : Preview changes only}
+        {--force : Skip confirmation}
+        {--chunk=200 : Chunk size for processing}';
 
-    protected $description = 'Regenerate slug paths for models using HasSlugPath trait';
+    protected $description = 'Enterprise slug_path regeneration for HasSlugPath models';
 
     public function handle(): int
     {
         $models = $this->resolveModelsToProcess();
 
         if ($models->isEmpty()) {
-            $this->warn('No models found using HasSlugPath trait.');
-
+            $this->warn('No models found.');
             return self::SUCCESS;
         }
 
-        $this->info("Found {$models->count()} model(s):");
+        $this->info("Found {$models->count()} model(s).");
+
         foreach ($models as $model) {
             $this->line(" • {$model}");
         }
 
-        if (! $this->option('dry-run') && ! $this->option('force') && $models->count() > 1) {
-            if (! $this->confirm('Proceed with all models?', false)) {
-                $this->info('Cancelled.');
-
+        if (
+            ! $this->option('dry-run') &&
+            ! $this->option('force') &&
+            $models->count() > 1
+        ) {
+            if (! $this->confirm('Proceed with ALL models?', false)) {
                 return self::SUCCESS;
             }
         }
 
         $total = 0;
+        $bar = null;
 
         foreach ($models as $modelClass) {
-            $total += $this->processModel($modelClass, (bool) $this->option('dry-run'));
+            $this->newLine();
+            $this->info("Processing: <fg=yellow>{$modelClass}</>");
+
+            $count = $this->processModel($modelClass);
+
+            $total += $count;
+
+            $this->line(" → {$count} records processed");
         }
 
         $this->newLine();
-        $this->info("Done. {$total} record(s) processed.");
+        $this->info("DONE → {$total} total records processed");
 
         if ($this->option('dry-run')) {
-            $this->warn('Dry-run mode: no changes saved.');
+            $this->warn('Dry-run mode: no changes were saved.');
         }
 
         return self::SUCCESS;
@@ -60,7 +71,7 @@ class GenerateFoundationSlugPaths extends Command
 
     /*
     |--------------------------------------------------------------------------
-    | Model Resolution
+    | MODEL DISCOVERY
     |--------------------------------------------------------------------------
     */
 
@@ -68,9 +79,9 @@ class GenerateFoundationSlugPaths extends Command
     {
         $filter = $this->argument('model');
 
-        $models = collect($this->scanAppModels())
-            ->filter(fn ($class) => is_subclass_of($class, Model::class))
-            ->filter(fn ($class) => $this->usesSlugTrait($class));
+        $models = collect($this->scanModels())
+            ->filter(fn($class) => is_subclass_of($class, Model::class))
+            ->filter(fn($class) => in_array(CanGenerateSlugPath::class, class_uses_recursive($class)));
 
         if ($filter) {
             $filter = Str::of($filter)->replace('/', '\\')->trim()->ltrim('\\')->toString();
@@ -80,8 +91,8 @@ class GenerateFoundationSlugPaths extends Command
                 exit(self::FAILURE);
             }
 
-            if (! $this->usesSlugTrait($filter)) {
-                $this->error("Model {$filter} does not use HasSlugPath trait.");
+            if (! in_array(CanGenerateSlugPath::class, class_uses_recursive($filter))) {
+                $this->error("Model {$filter} does not use HasSlugPath.");
                 exit(self::FAILURE);
             }
 
@@ -91,17 +102,17 @@ class GenerateFoundationSlugPaths extends Command
         return $models;
     }
 
-    protected function scanAppModels(): array
+    protected function scanModels(): array
     {
         return collect(File::allFiles(app_path()))
-            ->map(fn ($file) => $this->getClassFromFile($file->getPathname()))
+            ->map(fn($file) => $this->extractClass($file->getPathname()))
             ->filter()
-            ->filter(fn ($class) => class_exists($class))
+            ->filter(fn($class) => class_exists($class))
             ->values()
             ->all();
     }
 
-    protected function getClassFromFile(string $file): ?string
+    protected function extractClass(string $file): ?string
     {
         $content = File::get($file);
 
@@ -113,57 +124,57 @@ class GenerateFoundationSlugPaths extends Command
             return null;
         }
 
-        return $ns[1].'\\'.$class[1];
-    }
-
-    protected function usesSlugTrait(string $class): bool
-    {
-        return in_array(
-            CanGenerateSlugPath::class,
-            class_uses_recursive($class),
-            true
-        );
+        return $ns[1] . '\\' . $class[1];
     }
 
     /*
     |--------------------------------------------------------------------------
-    | Processing
+    | PROCESS MODEL (BATCH + SAFE MEMORY)
     |--------------------------------------------------------------------------
     */
 
-    protected function processModel(string $modelClass, bool $dryRun): int
+    protected function processModel(string $modelClass): int
     {
-        $this->info("Processing: <fg=yellow>{$modelClass}</>");
+        $chunkSize = (int) $this->option('chunk');
+        $dryRun = (bool) $this->option('dry-run');
 
-        $count = 0;
+        $total = 0;
 
-        try {
-            $modelClass::query()
-                ->lazyById(200)
-                ->each(function (Model $model) use (&$count, $dryRun) {
-                    $this->processRecord($model, $dryRun);
-                    $count++;
-                });
+        $modelClass::query()
+            ->select('*')
+            ->chunkById($chunkSize, function ($models) use (&$total, $dryRun, $modelClass) {
 
-            $this->line(" → {$count} records processed");
-        } catch (Throwable $e) {
-            $this->error("Error: {$e->getMessage()}");
+                foreach ($models as $model) {
+                    try {
+                        $updated = $this->processRecord($model, $dryRun);
+                        $total += $updated;
+                    } catch (Throwable $e) {
+                        $this->error("Error [{$modelClass} ID: {$model->getKey()}]: {$e->getMessage()}");
 
-            if ($this->output->isVerbose()) {
-                $this->line($e->getTraceAsString());
-            }
-        }
+                        if ($this->output->isVerbose()) {
+                            $this->line($e->getTraceAsString());
+                        }
+                    }
+                }
+            });
 
-        return $count;
+        return $total;
     }
 
-    protected function processRecord(Model $model, bool $dryRun): void
+    /*
+    |--------------------------------------------------------------------------
+    | RECORD PROCESSING (SAFE + CONFIG DRIVEN)
+    |--------------------------------------------------------------------------
+    */
+
+    protected function processRecord(Model $model, bool $dryRun): int
     {
         if (! method_exists($model, 'generateSlugPath')) {
-            return;
+            return 0;
         }
 
-        $column = $model->getSlugPathColumn();
+        $config = $model->resolveSlugPathConfig();
+        $column = $config['path'];
 
         $original = $model->getAttribute($column);
 
@@ -171,20 +182,21 @@ class GenerateFoundationSlugPaths extends Command
 
         $updated = $model->getAttribute($column);
 
+        if ($original === $updated) {
+            return 0;
+        }
+
         if ($dryRun) {
-            if ($original !== $updated) {
-                $this->line(" [DRY] {$model->getKey()} → {$updated}");
-            }
-
-            return;
+            $this->line(" [DRY] {$model->getKey()} → {$updated}");
+            return 1;
         }
 
-        if ($original !== $updated) {
-            $model->saveQuietly();
+        $model->saveQuietly();
 
-            if (method_exists($model, 'updateDescendants')) {
-                $model->updateDescendants();
-            }
+        if (method_exists($model, 'updateDescendants')) {
+            $model->updateDescendants();
         }
+
+        return 1;
     }
 }
