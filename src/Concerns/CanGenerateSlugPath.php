@@ -28,7 +28,7 @@ trait CanGenerateSlugPath
 
         static::saved(function (Model $model) {
             if ($model->wasChanged($model->slugRelevantColumns())) {
-                DB::afterCommit(fn() => $model->updateDescendants());
+                DB::afterCommit(fn () => $model->updateDescendants());
             }
         });
     }
@@ -61,6 +61,7 @@ trait CanGenerateSlugPath
 
         if (! $this->{$this->getParentColumn()}) {
             $this->{$this->getSlugPathColumn()} = $slug;
+
             return;
         }
 
@@ -68,11 +69,12 @@ trait CanGenerateSlugPath
 
         if (! $parent) {
             $this->{$this->getSlugPathColumn()} = $slug;
+
             return;
         }
 
         $this->{$this->getSlugPathColumn()} = trim(
-            ($parent->{$this->getSlugPathColumn()} ?? $parent->{$this->getSlugColumn()}) . '/' . $slug,
+            ($parent->{$this->getSlugPathColumn()} ?? $parent->{$this->getSlugColumn()}).'/'.$slug,
             '/'
         );
     }

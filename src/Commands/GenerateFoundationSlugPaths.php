@@ -25,6 +25,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found using HasSlugPath trait.');
+
             return self::SUCCESS;
         }
 
@@ -36,6 +37,7 @@ class GenerateFoundationSlugPaths extends Command
         if (! $this->option('dry-run') && ! $this->option('force') && $models->count() > 1) {
             if (! $this->confirm('Proceed with all models?', false)) {
                 $this->info('Cancelled.');
+
                 return self::SUCCESS;
             }
         }
@@ -111,7 +113,7 @@ class GenerateFoundationSlugPaths extends Command
             return null;
         }
 
-        return $ns[1] . '\\' . $class[1];
+        return $ns[1].'\\'.$class[1];
     }
 
     protected function usesSlugTrait(string $class): bool
@@ -173,6 +175,7 @@ class GenerateFoundationSlugPaths extends Command
             if ($original !== $updated) {
                 $this->line(" [DRY] {$model->getKey()} → {$updated}");
             }
+
             return;
         }
 
