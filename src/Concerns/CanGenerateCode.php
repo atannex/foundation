@@ -10,34 +10,15 @@ use RuntimeException;
 
 trait CanGenerateCode
 {
-    /**
-     * Boot the trait.
-     */
     protected static function bootCanGenerateCode(): void
     {
-        // CREATE
-        static::creating(static function (Model $model): void {
-            /** @var self $model */
-            $model->applyGeneratedCode();
-        });
+        static::creating(fn(Model $model) => $model->applyGeneratedCode());
 
-        // UPDATE
-        static::updating(static function (Model $model): void {
-            /** @var self $model */
-            $model->handleCodeOnUpdate();
-        });
+        static::updating(fn(Model $model) => $model->handleCodeOnUpdate());
 
-        // RESTORE (if SoftDeletes used)
-        static::restoring(static function (Model $model): void {
-            /** @var self $model */
-            $model->handleCodeOnRestore();
-        });
+        static::restoring(fn(Model $model) => $model->handleCodeOnRestore());
 
-        // OPTIONAL: DELETE HOOK (for audit/logging/extensions)
-        static::deleting(static function (Model $model): void {
-            /** @var self $model */
-            $model->handleCodeOnDelete();
-        });
+        static::deleting(fn(Model $model) => $model->handleCodeOnDelete());
     }
 
     /* -----------------------------------------------------------------
@@ -59,7 +40,7 @@ trait CanGenerateCode
     }
 
     /* -----------------------------------------------------------------
-     |  CONFIGURATION (Override in Model)
+     |  CONFIGURATION
      |-----------------------------------------------------------------*/
 
     protected function getCodeColumn(): string
@@ -97,25 +78,16 @@ trait CanGenerateCode
         return max(1, (int) ($this->codeMaxAttempts ?? 12));
     }
 
-    /**
-     * Should code be immutable after creation?
-     */
     protected function isCodeImmutable(): bool
     {
         return $this->codeImmutable ?? true;
     }
 
-    /**
-     * Should code regenerate when source changes?
-     */
     protected function shouldRegenerateOnUpdate(): bool
     {
         return $this->regenerateCodeOnUpdate ?? true;
     }
 
-    /**
-     * Override for scoped uniqueness (tenant, etc.)
-     */
     protected function getUniquenessQuery(): Builder
     {
         return $this->newQuery();
@@ -133,9 +105,7 @@ trait CanGenerateCode
             return;
         }
 
-        $sourceValue = (string) $this->getAttribute(
-            $this->getCodeSourceColumn()
-        );
+        $sourceValue = $this->getCodeSourceValue();
 
         $abbreviation = $this->createAbbreviation($sourceValue);
 
@@ -147,23 +117,22 @@ trait CanGenerateCode
 
     protected function handleCodeOnUpdate(): void
     {
-        $column = $this->getCodeColumn();
-        $sourceColumn = $this->getCodeSourceColumn();
-
-        // If immutable → never change
         if ($this->isCodeImmutable()) {
             return;
         }
 
-        // Only regenerate if source changed
-        if ($this->shouldRegenerateOnUpdate() && $this->isDirty($sourceColumn)) {
+        if (! $this->shouldRegenerateOnUpdate()) {
+            return;
+        }
+
+        // Detect change in source (supports dot notation)
+        if ($this->hasSourceChanged()) {
             $this->applyGeneratedCode(true);
         }
     }
 
     protected function handleCodeOnRestore(): void
     {
-        // Optional: ensure code exists after restore
         if (empty($this->getAttribute($this->getCodeColumn()))) {
             $this->applyGeneratedCode(true);
         }
@@ -171,8 +140,23 @@ trait CanGenerateCode
 
     protected function handleCodeOnDelete(): void
     {
-        // Hook for future use (audit, archive, logging, etc.)
-        // Keep empty for now (clean design)
+        // Extension hook (intentionally empty)
+    }
+
+    /**
+     * Detect if source value changed (supports relationships)
+     */
+    protected function hasSourceChanged(): bool
+    {
+        $path = $this->getCodeSourceColumn();
+
+        // Simple column → use isDirty
+        if (! str_contains($path, '.')) {
+            return $this->isDirty($path);
+        }
+
+        // Relationship-based → always regenerate (safe fallback)
+        return true;
     }
 
     /**
@@ -187,7 +171,7 @@ trait CanGenerateCode
         $maxAttempts = $this->getMaxGenerationAttempts();
         $column = $this->getCodeColumn();
 
-        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        for ($i = 0; $i < $maxAttempts; $i++) {
             $candidate = $prefix
                 .$year
                 .$abbr
@@ -200,11 +184,65 @@ trait CanGenerateCode
             }
         }
 
-        throw new RuntimeException(sprintf(
-            'Unable to generate unique code for %s after %d attempts.',
-            static::class,
-            $maxAttempts
-        ));
+        throw new RuntimeException(
+            "Failed to generate unique code for " . static::class
+        );
+    }
+
+    /* -----------------------------------------------------------------
+     |  SOURCE RESOLUTION (DOT NOTATION SUPPORT)
+     |-----------------------------------------------------------------*/
+
+    protected function getCodeSourceValue(): string
+    {
+        $path = $this->getCodeSourceColumn();
+
+        if (! str_contains($path, '.')) {
+            return (string) $this->getAttribute($path);
+        }
+
+        return (string) ($this->resolvePath($path) ?? '');
+    }
+
+    protected function resolvePath(string $path): mixed
+    {
+        $segments = explode('.', $path);
+        $value = $this;
+
+        foreach ($segments as $segment) {
+            if ($value === null) {
+                return null;
+            }
+
+            if ($value instanceof Model) {
+                if ($value->relationLoaded($segment)) {
+                    $value = $value->getRelation($segment);
+                    continue;
+                }
+
+                if (method_exists($value, $segment)) {
+                    $value = $value->$segment;
+                    continue;
+                }
+
+                $value = $value->getAttribute($segment);
+                continue;
+            }
+
+            if (is_array($value)) {
+                $value = $value[$segment] ?? null;
+                continue;
+            }
+
+            if (is_object($value)) {
+                $value = $value->{$segment} ?? null;
+                continue;
+            }
+
+            return null;
+        }
+
+        return $value;
     }
 
     /* -----------------------------------------------------------------
@@ -224,10 +262,6 @@ trait CanGenerateCode
         $abbr = '';
 
         foreach ($words as $word) {
-            if ($word === '') {
-                continue;
-            }
-
             $abbr .= strtoupper($word[0]);
 
             if (strlen($abbr) >= $this->getCodeAbbreviationLength()) {
@@ -235,16 +269,18 @@ trait CanGenerateCode
             }
         }
 
-        return $abbr !== '' ? $abbr : 'XX';
+        return $abbr ?: 'XX';
     }
 
     protected function normalizeAbbreviation(string $abbr): string
     {
         $length = $this->getCodeAbbreviationLength();
 
-        $abbr = strtoupper(substr($abbr, 0, $length));
-
-        return str_pad($abbr, $length, 'X');
+        return str_pad(
+            strtoupper(substr($abbr, 0, $length)),
+            $length,
+            'X'
+        );
     }
 
     protected function generateRandomNumericString(int $length): string
@@ -252,7 +288,7 @@ trait CanGenerateCode
         $result = '';
 
         for ($i = 0; $i < $length; $i++) {
-            $result .= (string) random_int(0, 9);
+            $result .= random_int(0, 9);
         }
 
         if ($length > 1 && $result[0] === '0') {
