@@ -26,6 +26,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found using CanGenerateSlugPath.');
+
             return self::SUCCESS;
         }
 
@@ -60,7 +61,7 @@ class GenerateFoundationSlugPaths extends Command
         $this->info("→ {$modelClass}");
 
         /** @var Model $instance */
-        $instance = new $modelClass();
+        $instance = new $modelClass;
 
         $parentColumn = $instance->getSlugConfig('parent');
 
@@ -119,7 +120,8 @@ class GenerateFoundationSlugPaths extends Command
         $root->syncSlugPath();
 
         if ($dryRun) {
-            $this->line("  [DRY] Root {$root->getKey()} → " . $this->getSlugPath($root));
+            $this->line("  [DRY] Root {$root->getKey()} → ".$this->getSlugPath($root));
+
             return;
         }
 
@@ -140,8 +142,8 @@ class GenerateFoundationSlugPaths extends Command
         $filter = $this->argument('model');
 
         $models = collect($this->scanAppModels())
-            ->filter(fn($class) => is_subclass_of($class, Model::class))
-            ->filter(fn($class) => $this->usesSlugTrait($class));
+            ->filter(fn ($class) => is_subclass_of($class, Model::class))
+            ->filter(fn ($class) => $this->usesSlugTrait($class));
 
         if (! $filter) {
             return $models->values();
@@ -168,9 +170,9 @@ class GenerateFoundationSlugPaths extends Command
     protected function scanAppModels(): array
     {
         return collect(File::allFiles(app_path()))
-            ->map(fn($file) => $this->getClassFromFile($file->getPathname()))
+            ->map(fn ($file) => $this->getClassFromFile($file->getPathname()))
             ->filter()
-            ->filter(fn($class) => class_exists($class))
+            ->filter(fn ($class) => class_exists($class))
             ->values()
             ->all();
     }
@@ -187,7 +189,7 @@ class GenerateFoundationSlugPaths extends Command
             return null;
         }
 
-        return $ns[1] . '\\' . $class[1];
+        return $ns[1].'\\'.$class[1];
     }
 
     protected function usesSlugTrait(string $class): bool
