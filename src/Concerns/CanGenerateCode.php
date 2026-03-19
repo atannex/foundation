@@ -14,22 +14,31 @@ use RuntimeException;
  *
  * Provides deterministic, unique, and extensible code generation for Eloquent models.
  *
- * Pattern:
- *   PREFIX + YEAR + ABBR + RANDOM
+ * Code Pattern:
+ *   PREFIX + YEAR + ABBREVIATION + RANDOM_DIGITS
  *
  * Example:
  *   ATA25PR1234
  *
  * Design Goals:
- * - Deterministic structure
- * - High cohesion, low coupling
- * - Extensible override points
- * - Strict encapsulation
+ * - Deterministic structure for consistency
+ * - High cohesion with low coupling
+ * - Clear extension points for customization
+ * - Strict encapsulation of implementation details
+ * - Robust error handling and reporting
+ *
+ * @example
+ * class Product extends Model
+ * {
+ *     use CanGenerateCode;
+ *     protected string $codePrefix = 'PRD';
+ *     protected string $codeSourceColumn = 'product_name';
+ * }
  */
 trait CanGenerateCode
 {
     /**
-     * Boot the trait.
+     * Boot the trait and register model events.
      */
     protected static function bootCanGenerateCode(): void
     {
@@ -38,10 +47,17 @@ trait CanGenerateCode
         });
     }
 
+    /* =====================================================================
+     |  Lifecycle Entry Points
+     | ===================================================================== */
+
     /**
-     * Entry point for code generation.
+     * Initialize code generation during model creation.
      *
-     * @internal Called during model lifecycle.
+     * Called automatically during the model lifecycle. Checks for existing
+     * code before generating a new one.
+     *
+     * @internal Called by the creating event listener.
      */
     protected function initializeGeneratedCode(): void
     {
@@ -61,61 +77,136 @@ trait CanGenerateCode
         );
     }
 
-    /* -----------------------------------------------------------------
-     |  Configuration (Override Points)
-     | -----------------------------------------------------------------
+    /**
+     * Public API for code regeneration.
+     *
+     * Safe to call externally from CLI, services, or jobs. Optionally
+     * force regeneration even if a code already exists.
+     *
+     * @param  bool  $force  Force regeneration of existing code
+     * @throws RuntimeException If generation fails after max attempts
      */
+    public function regenerateCode(bool $force = false): void
+    {
+        $column = $this->codeColumn();
 
+        if ($force) {
+            $this->setAttribute($column, null);
+        }
+
+        $this->initializeGeneratedCode();
+    }
+
+    /* =====================================================================
+     |  Configuration (Customization Points)
+     | ===================================================================== */
+
+    /**
+     * Get the column name where the generated code is stored.
+     *
+     * @return string
+     */
     protected function codeColumn(): string
     {
         return $this->codeColumn ?? 'code';
     }
 
+    /**
+     * Get the source column to derive the abbreviation from.
+     *
+     * @return string
+     */
     protected function sourceColumn(): string
     {
         return $this->codeSourceColumn ?? 'name';
     }
 
+    /**
+     * Get the prefix for generated codes.
+     *
+     * @return string
+     */
     protected function codePrefix(): string
     {
         return $this->codePrefix ?? 'ATA';
     }
 
+    /**
+     * Get the year format for code generation.
+     *
+     * Accepts any valid PHP date format (e.g., 'y' for 2-digit year, 'Y' for full).
+     *
+     * @return string
+     */
     protected function yearFormat(): string
     {
         return $this->codeYearFormat ?? 'y';
     }
 
+    /**
+     * Get the length of the abbreviation component.
+     *
+     * @return int Must be greater than 0
+     */
     protected function abbreviationLength(): int
     {
         return $this->codeAbbreviationLength ?? 2;
     }
 
+    /**
+     * Get the length of the random numeric component.
+     *
+     * @return int Must be greater than 0
+     */
     protected function randomLength(): int
     {
         return $this->codeRandomLength ?? 4;
     }
 
+    /**
+     * Get the maximum number of generation attempts before failing.
+     *
+     * Increase this for high-collision scenarios.
+     *
+     * @return int
+     */
     protected function maxAttempts(): int
     {
         return $this->codeMaxAttempts ?? 12;
     }
 
     /**
-     * Override to scope uniqueness (multi-tenant, etc.)
+     * Customize uniqueness scope (multi-tenant, segments, etc).
+     *
+     * Override this method to restrict code uniqueness to specific scopes.
+     *
+     * @return Builder
+     *
+     * @example
+     * protected function uniquenessQuery(): Builder
+     * {
+     *     return $this->newQuery()->where('tenant_id', auth()->id());
+     * }
      */
     protected function uniquenessQuery(): Builder
     {
         return $this->newQuery();
     }
 
-    /* -----------------------------------------------------------------
+    /* =====================================================================
      |  Core Generation Logic
-     | -----------------------------------------------------------------
-     */
+     | ===================================================================== */
 
     /**
-     * Generate a unique code with retry strategy.
+     * Generate a unique code with automatic retry strategy.
+     *
+     * Attempts to create a unique code up to maxAttempts times before
+     * raising an exception.
+     *
+     * @param  string  $abbreviation  The abbreviation component
+     * @return string The generated unique code
+     *
+     * @throws RuntimeException If unable to generate unique code within max attempts
      */
     final protected function resolveUniqueCode(string $abbreviation): string
     {
@@ -133,7 +224,10 @@ trait CanGenerateCode
     }
 
     /**
-     * Build immutable generation context.
+     * Build the immutable context for code generation.
+     *
+     * @param  string  $abbreviation
+     * @return array
      */
     private function buildContext(string $abbreviation): array
     {
@@ -147,18 +241,24 @@ trait CanGenerateCode
     }
 
     /**
-     * Compose final code string.
+     * Compose the final code string from context.
+     *
+     * @param  array  $context
+     * @return string
      */
     private function composeCode(array $context): string
     {
         return $context['prefix']
-            .$context['year']
-            .$context['abbr']
-            .$this->generateRandomDigits($context['randomLen']);
+            . $context['year']
+            . $context['abbr']
+            . $this->generateRandomDigits($context['randomLen']);
     }
 
     /**
-     * Check if code already exists.
+     * Check if a code already exists in the database.
+     *
+     * @param  string  $code
+     * @return bool
      */
     private function codeExists(string $code): bool
     {
@@ -167,13 +267,21 @@ trait CanGenerateCode
             ->exists();
     }
 
-    /* -----------------------------------------------------------------
+    /* =====================================================================
      |  Abbreviation Pipeline
-     | -----------------------------------------------------------------
-     */
+     | ===================================================================== */
 
     /**
-     * Create abbreviation from source string.
+     * Build abbreviation from source string.
+     *
+     * Extracts the first letter from each word in the source string.
+     *
+     * @param  string  $value  The source string (e.g., name field)
+     * @return string The generated abbreviation
+     *
+     * @example
+     * buildAbbreviation('Product Research Team')  // => 'PRT'
+     * buildAbbreviation('John Doe')                // => 'JD'
      */
     protected function buildAbbreviation(string $value): string
     {
@@ -181,7 +289,7 @@ trait CanGenerateCode
 
         $letters = collect(preg_split('/\s+/', $value))
             ->filter()
-            ->map(fn (string $word) => Str::upper(Str::substr($word, 0, 1)));
+            ->map(fn(string $word) => Str::upper(Str::substr($word, 0, 1)));
 
         return $letters
             ->take($this->abbreviationLength())
@@ -189,7 +297,10 @@ trait CanGenerateCode
     }
 
     /**
-     * Normalize abbreviation length & casing.
+     * Normalize abbreviation to correct length and uppercase.
+     *
+     * @param  string  $abbr
+     * @return string
      */
     protected function normalizeAbbreviation(string $abbr): string
     {
@@ -199,22 +310,31 @@ trait CanGenerateCode
     }
 
     /**
-     * Remove unwanted characters.
+     * Sanitize text by removing special characters.
+     *
+     * @param  string  $value
+     * @return string
      */
     private function sanitizeText(string $value): string
     {
         return trim(
-            preg_replace('/[^A-Za-z0-9\s]/', '', $value) ?? ''
+            (string) preg_replace('/[^A-Za-z0-9\s]/', '', $value)
         );
     }
 
-    /* -----------------------------------------------------------------
-     |  Random Generation
-     | -----------------------------------------------------------------
-     */
+    /* =====================================================================
+     |  Random Number Generation
+     | ===================================================================== */
 
     /**
-     * Generate fixed-length numeric string.
+     * Generate a fixed-length random numeric string.
+     *
+     * @param  int  $length  The desired length (must be > 0)
+     * @return string Numeric string of specified length
+     *
+     * @example
+     * generateRandomDigits(4)  // => '7382'
+     * generateRandomDigits(0)  // => ''
      */
     private function generateRandomDigits(int $length): string
     {
@@ -222,19 +342,21 @@ trait CanGenerateCode
             return '';
         }
 
-        $min = (int) ('1'.str_repeat('0', $length - 1));
+        $min = (int) ('1' . str_repeat('0', $length - 1));
         $max = (int) str_repeat('9', $length);
 
         return (string) random_int($min, $max);
     }
 
-    /* -----------------------------------------------------------------
-     |  Guards & Validation
-     | -----------------------------------------------------------------
-     */
+    /* =====================================================================
+     |  Validation & Error Handling
+     | ===================================================================== */
 
     /**
-     * Determine if code already exists on model.
+     * Determine if a code is already defined on the model.
+     *
+     * @param  string  $column
+     * @return bool
      */
     private function hasPredefinedCode(string $column): bool
     {
@@ -242,7 +364,10 @@ trait CanGenerateCode
     }
 
     /**
-     * Build detailed exception.
+     * Build detailed exception with generation context.
+     *
+     * @param  array  $context
+     * @return RuntimeException
      */
     private function buildGenerationException(array $context): RuntimeException
     {
