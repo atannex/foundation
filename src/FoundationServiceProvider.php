@@ -3,6 +3,7 @@
 namespace Atannex\Foundation;
 
 use Atannex\Foundation\Commands\GenerateFoundationCodes;
+use Atannex\Foundation\Commands\GenerateFoundationSlugPaths;
 use Atannex\Foundation\Commands\GenerateFoundationSlugs;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -17,6 +18,7 @@ class FoundationServiceProvider extends PackageServiceProvider
             ->hasCommands([
                 GenerateFoundationCodes::class,
                 GenerateFoundationSlugs::class,
+                GenerateFoundationSlugPaths::class,
             ]);
     }
 
