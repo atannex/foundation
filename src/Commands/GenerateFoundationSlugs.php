@@ -1,51 +1,156 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Atannex\Foundation\Commands;
 
-use App\Models\Tags\Tag;
+use Atannex\Foundation\Concerns\CanGenerateSlug;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\File;
 
 class GenerateFoundationSlugs extends Command
 {
-    /**
-     * The name and signature of the console command.
-     */
-    protected $signature = 'generate:atannex-slug
+    protected $signature = 'atannex:generate-slug
+                            {model? : Fully qualified model class}
                             {--force : Regenerate slugs even if they already exist}';
 
-    /**
-     * The console command description.
-     */
-    protected $description = 'Regenerate unique slugs for all tags in the database.';
+    protected $description = 'Generate or regenerate slugs for any model using CanGenerateSlug trait.';
 
-    /**
-     * Execute the console command.
-     */
     public function handle(): int
     {
-        $this->info("Starting slug regeneration for tags...\n");
+        $models = $this->resolveModels();
+
+        if (empty($models)) {
+            $this->warn('No models found using CanGenerateSlug trait.');
+            return self::SUCCESS;
+        }
+
+        foreach ($models as $modelClass) {
+            $this->processModel($modelClass);
+        }
+
+        $this->info("\n✅ Slug generation completed.");
+
+        return self::SUCCESS;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Model Resolution
+    |--------------------------------------------------------------------------
+    */
+
+    protected function resolveModels(): array
+    {
+        // If a specific model is passed → use only that
+        if ($input = $this->argument('model')) {
+            return [$input];
+        }
+
+        // Otherwise auto-discover models using the trait
+        return $this->discoverModelsUsingTrait();
+    }
+
+    protected function discoverModelsUsingTrait(): array
+    {
+        $models = [];
+
+        $modelPath = app_path('Models');
+
+        foreach (File::allFiles($modelPath) as $file) {
+            $class = $this->getClassFromFile($file->getPathname());
+
+            if (! class_exists($class)) {
+                continue;
+            }
+
+            if (! is_subclass_of($class, Model::class)) {
+                continue;
+            }
+
+            if ($this->usesSlugTrait($class)) {
+                $models[] = $class;
+            }
+        }
+
+        return $models;
+    }
+
+    protected function usesSlugTrait(string $class): bool
+    {
+        $traits = class_uses_recursive($class);
+
+        return in_array(
+            CanGenerateSlug::class,
+            $traits,
+            true
+        );
+    }
+
+    protected function getClassFromFile(string $path): ?string
+    {
+        $relative = str_replace(app_path() . DIRECTORY_SEPARATOR, '', $path);
+        $class = 'App\\' . str_replace(
+            [DIRECTORY_SEPARATOR, '.php'],
+            ['\\', ''],
+            $relative
+        );
+
+        return $class;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Processing
+    |--------------------------------------------------------------------------
+    */
+
+    protected function processModel(string $modelClass): void
+    {
+        $this->info("\n🔄 Processing: {$modelClass}");
+
+        /** @var Model $instance */
+        $instance = new $modelClass;
+
+        if (! method_exists($instance, 'ensureSlug')) {
+            $this->warn("Skipped (no ensureSlug method).");
+            return;
+        }
+
+        $query = $modelClass::query();
+
+        // Include soft deleted if supported
+        if (method_exists($modelClass, 'withTrashed')) {
+            $query = $modelClass::withTrashed();
+        }
 
         $processed = 0;
 
-        Tag::withTrashed()->chunk(200, function ($tags) use (&$processed) {
+        $query->chunkById(200, function ($records) use (&$processed) {
+            foreach ($records as $model) {
 
-            foreach ($tags as $tag) {
-
-                if (! $this->option('force') && ! empty($tag->slug)) {
+                if (! $this->option('force') && ! empty($model->{$model->getSlugColumn()})) {
                     continue;
                 }
 
-                $tag->ensureSlug();
-                $tag->save();
+                try {
+                    $model->ensureSlug();
+                    $model->save();
 
-                $processed++;
-                $this->line("Updated slug for Tag ID {$tag->id}");
+                    $processed++;
+                } catch (\Throwable $e) {
+                    $this->error(
+                        sprintf(
+                            'Failed for ID %s: %s',
+                            $model->getKey(),
+                            $e->getMessage()
+                        )
+                    );
+                }
             }
         });
 
-        $this->info("\nSlug regeneration complete.");
-        $this->info("Total tags updated: {$processed}");
-
-        return Command::SUCCESS;
+        $this->line("✔ {$processed} records updated.");
     }
 }
