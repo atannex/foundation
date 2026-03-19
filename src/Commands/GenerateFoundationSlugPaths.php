@@ -24,7 +24,7 @@ class GenerateFoundationSlugPaths extends Command
         $models = $this->resolveModelsToProcess();
 
         if ($models->isEmpty()) {
-            $this->warn('No models found using CanGenerateSlugPath.');
+            $this->warn('No models found using HasSlugPath trait.');
             return self::SUCCESS;
         }
 
@@ -54,86 +54,6 @@ class GenerateFoundationSlugPaths extends Command
         }
 
         return self::SUCCESS;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Core Processing (Optimized)
-    |--------------------------------------------------------------------------
-    */
-
-    protected function processModel(string $modelClass): int
-    {
-        $this->info("→ {$modelClass}");
-
-        /** @var Model $instance */
-        $instance = new $modelClass();
-
-        $parentColumn = $instance->getSlugConfig('parent');
-
-        $dryRun = $this->option('dry-run');
-
-        $count = 0;
-
-        try {
-            DB::transaction(function () use (
-                $modelClass,
-                $parentColumn,
-                &$count,
-                $dryRun
-            ) {
-                // ✅ Only process ROOT nodes
-                $roots = $modelClass::query()
-                    ->whereNull($parentColumn)
-                    ->orWhere($parentColumn, 0);
-
-                $totalRoots = $roots->count();
-
-                $bar = $this->output->createProgressBar($totalRoots);
-                $bar->start();
-
-                $roots->lazyById()->each(function (Model $root) use (&$count, $dryRun, $bar) {
-                    $this->processTree($root, $dryRun);
-                    $count++;
-                    $bar->advance();
-                });
-
-                $bar->finish();
-            });
-
-            $this->newLine();
-            $this->line("  ✓ {$count} root tree(s) processed");
-        } catch (Throwable $e) {
-            $this->error("  ✗ Failed: {$e->getMessage()}");
-
-            if ($this->output->isVerbose()) {
-                $this->line($e->getTraceAsString());
-            }
-        }
-
-        return $count;
-    }
-
-    /**
-     * Process full tree from root (single cascade only)
-     */
-    protected function processTree(Model $root, bool $dryRun): void
-    {
-        if (! method_exists($root, 'syncSlugPath')) {
-            return;
-        }
-
-        $root->syncSlugPath();
-
-        if ($dryRun) {
-            $this->line("  [DRY] Root {$root->getKey()} → " . $this->getSlugPath($root));
-            return;
-        }
-
-        $root->saveQuietly();
-
-        // ✅ ONE cascade per tree (critical optimization)
-        $root->cascadeSlugPathUpdate();
     }
 
     /*
@@ -191,7 +111,7 @@ class GenerateFoundationSlugPaths extends Command
             return null;
         }
 
-        return $ns[1].'\\'.$class[1];
+        return $ns[1] . '\\' . $class[1];
     }
 
     protected function usesSlugTrait(string $class): bool
