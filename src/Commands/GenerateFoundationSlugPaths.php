@@ -5,6 +5,7 @@ namespace Atannex\Foundation\Commands;
 use Atannex\Foundation\Concerns\CanGenerateSlugPath;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Throwable;
@@ -24,6 +25,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found using CanGenerateSlugPath trait.');
+
             return self::SUCCESS;
         }
 
@@ -37,6 +39,7 @@ class GenerateFoundationSlugPaths extends Command
         if (! $this->option('dry-run') && ! $this->option('force') && $models->count() > 1) {
             if (! $this->confirm('Do you want to regenerate slug paths for ALL these models?', false)) {
                 $this->info('Command cancelled.');
+
                 return self::SUCCESS;
             }
         }
@@ -60,13 +63,13 @@ class GenerateFoundationSlugPaths extends Command
         return self::SUCCESS;
     }
 
-    protected function resolveModelsToProcess(): \Illuminate\Support\Collection
+    protected function resolveModelsToProcess(): Collection
     {
         $filter = $this->argument('model');
 
         $allModels = collect($this->scanAppModels())
-            ->filter(fn($class) => is_subclass_of($class, Model::class))
-            ->filter(fn($class) => $this->usesSlugTrait($class));
+            ->filter(fn ($class) => is_subclass_of($class, Model::class))
+            ->filter(fn ($class) => $this->usesSlugTrait($class));
 
         if ($filter) {
             // Normalize input (App\Models\Category → App\Models\Category)
@@ -121,7 +124,7 @@ class GenerateFoundationSlugPaths extends Command
             return null;
         }
 
-        return trim($ns[1] . '\\' . $classMatch[1]);
+        return trim($ns[1].'\\'.$classMatch[1]);
     }
 
     protected function usesSlugTrait(string $class): bool
@@ -149,7 +152,7 @@ class GenerateFoundationSlugPaths extends Command
 
             $this->line("  → {$count} record(s) processed");
         } catch (Throwable $e) {
-            $this->error("Error processing {$modelClass}: " . $e->getMessage());
+            $this->error("Error processing {$modelClass}: ".$e->getMessage());
             if ($this->output->isVerbose()) {
                 $this->line($e->getTraceAsString());
             }
@@ -170,6 +173,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($dryRun) {
             $this->line("  [DRY] Would update: {$model->getKey()} → {$model->getAttribute($model->getSlugConfig('slug_path'))}");
+
             return;
         }
 
