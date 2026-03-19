@@ -19,7 +19,7 @@ trait CanGenerateSlugPath
 
     protected static function bootCanGenerateSlugPath(): void
     {
-        static::creating(fn (Model $model) => $model->syncSlugPath());
+        static::creating(fn(Model $model) => $model->syncSlugPath());
 
         static::updating(function (Model $model) {
             if ($model->isSlugRelevantDirty()) {
@@ -29,13 +29,13 @@ trait CanGenerateSlugPath
 
         static::updated(function (Model $model) {
             if ($model->wasSlugRelevantChanged()) {
-                DB::transaction(fn () => $model->cascadeSlugPathUpdate());
+                DB::transaction(fn() => $model->cascadeSlugPathUpdate());
             }
         });
 
         // Optional: handle restore if using SoftDeletes
         if (method_exists(static::class, 'restored')) {
-            static::restored(fn (Model $model) => $model->cascadeSlugPathUpdate());
+            static::restored(fn(Model $model) => $model->cascadeSlugPathUpdate());
         }
     }
 
@@ -47,12 +47,12 @@ trait CanGenerateSlugPath
 
     public function parent(): BelongsTo
     {
-        return $this->belongsTo(static::class, $this->parentColumn());
+        return $this->belongsTo(static::class, $this->getSlugConfig('parent'));
     }
 
     public function children(): HasMany
     {
-        return $this->hasMany(static::class, $this->parentColumn());
+        return $this->hasMany(static::class, $this->getSlugConfig('parent'));
     }
 
     /*
@@ -64,15 +64,14 @@ trait CanGenerateSlugPath
     protected function syncSlugPath(): void
     {
         $this->ensureSlugExists();
-
-        $this->{$this->slugPathColumn()} = $this->buildSlugPath();
+        $this->{$this->getSlugConfig('slug_path')} = $this->buildSlugPath();
     }
 
     protected function buildSlugPath(): string
     {
-        $slug = $this->{$this->slugColumn()};
+        $slug = $this->{$this->getSlugConfig('slug')};
 
-        if (! $this->{$this->parentColumn()}) {
+        if (! $this->{$this->getSlugConfig('parent')}) {
             return $slug;
         }
 
@@ -82,9 +81,10 @@ trait CanGenerateSlugPath
             return $slug;
         }
 
-        $base = $parent->{$this->slugPathColumn()} ?: $parent->{$this->slugColumn()};
+        $parentSlugPath = $parent->{$this->getSlugConfig('slug_path')}
+            ?: $parent->{$this->getSlugConfig('slug')};
 
-        return trim("{$base}/{$slug}", '/');
+        return trim("{$parentSlugPath}/{$slug}", '/');
     }
 
     protected function cascadeSlugPathUpdate(): void
@@ -101,10 +101,7 @@ trait CanGenerateSlugPath
 
         foreach ($this->children as $child) {
             $child->syncSlugPath();
-
-            // Avoid triggering full model events again
-            $child->saveQuietly();
-
+            $child->saveQuietly(); // Avoids firing events again
             $child->updateDescendants();
             $child->afterSlugPathUpdated();
         }
@@ -118,6 +115,8 @@ trait CanGenerateSlugPath
 
     protected function getParentForSlug(): ?Model
     {
+        $parentColumn = $this->getSlugConfig('parent');
+
         if ($this->relationLoaded('parent')) {
             return $this->parent;
         }
@@ -126,8 +125,8 @@ trait CanGenerateSlugPath
             ->withoutGlobalScopes()
             ->select([
                 'id',
-                $this->slugColumn(),
-                $this->slugPathColumn(),
+                $this->getSlugConfig('slug'),
+                $this->getSlugConfig('slug_path'),
             ])
             ->first();
     }
@@ -135,45 +134,53 @@ trait CanGenerateSlugPath
     protected function isSlugRelevantDirty(): bool
     {
         return $this->isDirty([
-            $this->slugColumn(),
-            $this->parentColumn(),
+            $this->getSlugConfig('slug'),
+            $this->getSlugConfig('parent'),
         ]);
     }
 
     protected function wasSlugRelevantChanged(): bool
     {
         return $this->wasChanged([
-            $this->slugColumn(),
-            $this->parentColumn(),
+            $this->getSlugConfig('slug'),
+            $this->getSlugConfig('parent'),
         ]);
     }
 
     /*
     |--------------------------------------------------------------------------
-    | Column Resolvers (No duplication)
+    | Configuration
     |--------------------------------------------------------------------------
     */
 
-    protected function parentColumn(): string
+    /**
+     * Override this method in your model if you want custom column names.
+     */
+    public function resolveSlugConfig(): array
     {
-        return $this->resolveColumn('parentColumn', 'parent_id');
+        return [
+            'parent'    => 'parent_id',
+            'slug'      => 'slug',
+            'slug_path' => 'slug_path',
+        ];
     }
 
-    protected function slugColumn(): string
+    /**
+     * Helper to access config values safely.
+     */
+    protected function getSlugConfig(string $key): string
     {
-        return $this->resolveColumn('slugColumn', 'slug');
-    }
+        $config = $this->resolveSlugConfig();
 
-    protected function slugPathColumn(): string
-    {
-        return $this->resolveColumn('slugPathColumn', 'slug_path');
-    }
+        if (! array_key_exists($key, $config)) {
+            throw new \RuntimeException("Missing slug config key: '$key'");
+        }
 
-    protected function resolveColumn(string $property, string $default): string
-    {
-        return property_exists($this, $property)
-            ? $this->{$property}
-            : $default;
+        if (! is_string($config[$key]) || trim($config[$key]) === '') {
+            throw new \RuntimeException("Invalid column name for key '$key' in resolveSlugConfig()");
+        }
+
+        return $config[$key];
     }
 
     /*
@@ -184,11 +191,13 @@ trait CanGenerateSlugPath
 
     protected function ensureSlugExists(): void
     {
-        if (! isset($this->{$this->slugColumn()})) {
+        $slugColumn = $this->getSlugConfig('slug');
+
+        if (! isset($this->{$slugColumn})) {
             throw new \RuntimeException(sprintf(
                 'Model [%s] requires "%s" attribute for slug generation.',
                 static::class,
-                $this->slugColumn()
+                $slugColumn
             ));
         }
     }
