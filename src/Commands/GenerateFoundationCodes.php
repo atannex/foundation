@@ -38,7 +38,6 @@ class GenerateFoundationCodes extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No valid models found using CanGenerateCode trait.');
-
             return self::FAILURE;
         }
 
@@ -57,7 +56,7 @@ class GenerateFoundationCodes extends Command
         $failures = collect();
 
         foreach ($models as $modelClass) {
-            /** @var Model&CanGenerateCode $model */
+            /** @var Model&\Atannex\Foundation\Concerns\CanGenerateCode $model */
             $model = new $modelClass;
 
             if (! method_exists($model, 'resolveCodeColumn')) {
@@ -70,7 +69,6 @@ class GenerateFoundationCodes extends Command
 
             if (! $this->columnExists($model, $codeColumn)) {
                 $this->warn("Skipping {$modelClass} (missing column: {$codeColumn})");
-
                 continue;
             }
 
@@ -81,7 +79,6 @@ class GenerateFoundationCodes extends Command
 
             if ($count === 0) {
                 $this->line("No records to process for {$modelClass}");
-
                 continue;
             }
 
@@ -185,7 +182,7 @@ class GenerateFoundationCodes extends Command
 
         return collect(scandir($path))
             ->filter(fn ($file) => str_ends_with($file, '.php'))
-            ->map(fn ($file) => 'App\\Models\\'.Str::replaceLast('.php', '', $file))
+            ->map(fn ($file) => 'App\\Models\\' . Str::replaceLast('.php', '', $file))
             ->filter(fn ($class) => class_exists($class))
             ->values()
             ->all();
