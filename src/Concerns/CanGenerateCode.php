@@ -15,14 +15,33 @@ trait CanGenerateCode
      */
     protected static function bootCanGenerateCode(): void
     {
+        // CREATE
         static::creating(static function (Model $model): void {
             /** @var self $model */
             $model->applyGeneratedCode();
         });
+
+        // UPDATE
+        static::updating(static function (Model $model): void {
+            /** @var self $model */
+            $model->handleCodeOnUpdate();
+        });
+
+        // RESTORE (if SoftDeletes used)
+        static::restoring(static function (Model $model): void {
+            /** @var self $model */
+            $model->handleCodeOnRestore();
+        });
+
+        // OPTIONAL: DELETE HOOK (for audit/logging/extensions)
+        static::deleting(static function (Model $model): void {
+            /** @var self $model */
+            $model->handleCodeOnDelete();
+        });
     }
 
     /* -----------------------------------------------------------------
-     |  PUBLIC ACCESSORS (Used by Commands / External Systems)
+     |  PUBLIC ACCESSORS
      |-----------------------------------------------------------------*/
 
     public function resolveCodeColumn(): string
@@ -36,14 +55,11 @@ trait CanGenerateCode
             'column' => $this->getCodeColumn(),
             'source' => $this->getCodeSourceColumn(),
             'prefix' => $this->getCodePrefix(),
-            'year_format' => $this->getCodeYearFormat(),
-            'abbr_length' => $this->getCodeAbbreviationLength(),
-            'random_length' => $this->getCodeRandomDigits(),
         ];
     }
 
     /* -----------------------------------------------------------------
-     |  CONFIGURATION (Override in Model if needed)
+     |  CONFIGURATION (Override in Model)
      |-----------------------------------------------------------------*/
 
     protected function getCodeColumn(): string
@@ -82,7 +98,23 @@ trait CanGenerateCode
     }
 
     /**
-     * Override this if you want scoped uniqueness (multi-tenant, etc.)
+     * Should code be immutable after creation?
+     */
+    protected function isCodeImmutable(): bool
+    {
+        return $this->codeImmutable ?? true;
+    }
+
+    /**
+     * Should code regenerate when source changes?
+     */
+    protected function shouldRegenerateOnUpdate(): bool
+    {
+        return $this->regenerateCodeOnUpdate ?? true;
+    }
+
+    /**
+     * Override for scoped uniqueness (tenant, etc.)
      */
     protected function getUniquenessQuery(): Builder
     {
@@ -93,12 +125,11 @@ trait CanGenerateCode
      |  CORE LOGIC
      |-----------------------------------------------------------------*/
 
-    public function applyGeneratedCode(): void
+    public function applyGeneratedCode(bool $force = false): void
     {
         $column = $this->getCodeColumn();
 
-        // Skip if already set
-        if (! empty($this->getAttribute($column))) {
+        if (! $force && ! empty($this->getAttribute($column))) {
             return;
         }
 
@@ -112,6 +143,36 @@ trait CanGenerateCode
             $column,
             $this->generateUniqueCode($abbreviation)
         );
+    }
+
+    protected function handleCodeOnUpdate(): void
+    {
+        $column = $this->getCodeColumn();
+        $sourceColumn = $this->getCodeSourceColumn();
+
+        // If immutable → never change
+        if ($this->isCodeImmutable()) {
+            return;
+        }
+
+        // Only regenerate if source changed
+        if ($this->shouldRegenerateOnUpdate() && $this->isDirty($sourceColumn)) {
+            $this->applyGeneratedCode(true);
+        }
+    }
+
+    protected function handleCodeOnRestore(): void
+    {
+        // Optional: ensure code exists after restore
+        if (empty($this->getAttribute($this->getCodeColumn()))) {
+            $this->applyGeneratedCode(true);
+        }
+    }
+
+    protected function handleCodeOnDelete(): void
+    {
+        // Hook for future use (audit, archive, logging, etc.)
+        // Keep empty for now (clean design)
     }
 
     /**
@@ -128,9 +189,9 @@ trait CanGenerateCode
 
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             $candidate = $prefix
-                .$year
-                .$abbr
-                .$this->generateRandomNumericString($randomLength);
+                . $year
+                . $abbr
+                . $this->generateRandomNumericString($randomLength);
 
             if (! $this->getUniquenessQuery()
                 ->where($column, $candidate)
@@ -194,7 +255,6 @@ trait CanGenerateCode
             $result .= (string) random_int(0, 9);
         }
 
-        // Prevent leading zero for better readability
         if ($length > 1 && $result[0] === '0') {
             $result[0] = (string) random_int(1, 9);
         }
