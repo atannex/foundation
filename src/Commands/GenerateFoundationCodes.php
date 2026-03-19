@@ -147,8 +147,13 @@ class GenerateFoundationCodes extends Command
 
     protected function resolveCodeColumn(Model $model): string
     {
-        return $this->option('column')
-            ?: (method_exists($model, 'codeColumn') ? $model->codeColumn() : 'code');
+        if ($override = $this->option('column')) {
+            return $override;
+        }
+
+        return property_exists($model, 'codeColumn')
+            ? $model->codeColumn
+            : 'code';
     }
 
     protected function columnExists(Model $model, string $column): bool
