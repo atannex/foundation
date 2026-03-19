@@ -34,11 +34,13 @@ class GenerateFoundationCodes extends Command
             $models = $this->resolveTargetModels();
         } catch (Throwable $e) {
             $this->error($e->getMessage());
+
             return self::FAILURE;
         }
 
         if ($models->isEmpty()) {
             $this->warn('No valid models found.');
+
             return self::FAILURE;
         }
 
@@ -62,6 +64,7 @@ class GenerateFoundationCodes extends Command
 
             if (! method_exists($model, 'resolveCodeColumn')) {
                 $this->warn("Skipping {$modelClass} (invalid trait)");
+
                 continue;
             }
 
@@ -69,6 +72,7 @@ class GenerateFoundationCodes extends Command
 
             if (! $this->columnExists($model, $codeColumn)) {
                 $this->warn("Skipping {$modelClass} (missing column: {$codeColumn})");
+
                 continue;
             }
 
@@ -89,6 +93,7 @@ class GenerateFoundationCodes extends Command
 
             if ($count === 0) {
                 $this->line("No records for {$modelClass}");
+
                 continue;
             }
 
@@ -166,6 +171,7 @@ class GenerateFoundationCodes extends Command
                 }
 
                 DB::commit();
+
                 return;
             } catch (Throwable $e) {
                 DB::rollBack();
@@ -220,7 +226,7 @@ class GenerateFoundationCodes extends Command
         }
 
         return collect($this->discoverModels(app_path('Models')))
-            ->filter(fn($c) => $this->usesTrait($c))
+            ->filter(fn ($c) => $this->usesTrait($c))
             ->values();
     }
 
@@ -231,9 +237,9 @@ class GenerateFoundationCodes extends Command
         }
 
         return collect(scandir($path))
-            ->filter(fn($f) => str_ends_with($f, '.php'))
-            ->map(fn($f) => 'App\\Models\\' . Str::replaceLast('.php', '', $f))
-            ->filter(fn($c) => class_exists($c))
+            ->filter(fn ($f) => str_ends_with($f, '.php'))
+            ->map(fn ($f) => 'App\\Models\\'.Str::replaceLast('.php', '', $f))
+            ->filter(fn ($c) => class_exists($c))
             ->values()
             ->all();
     }
