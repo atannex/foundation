@@ -81,8 +81,8 @@ class GenerateFoundationSlugPaths extends Command
         $filter = $this->argument('model');
 
         $models = collect($this->scanModels())
-            ->filter(fn($class) => is_subclass_of($class, Model::class))
-            ->filter(fn($class) => in_array(CanGenerateSlugPath::class, class_uses_recursive($class)));
+            ->filter(fn ($class) => is_subclass_of($class, Model::class))
+            ->filter(fn ($class) => in_array(CanGenerateSlugPath::class, class_uses_recursive($class)));
 
         if ($filter) {
             $filter = Str::of($filter)->replace('/', '\\')->trim()->ltrim('\\')->toString();
@@ -106,9 +106,9 @@ class GenerateFoundationSlugPaths extends Command
     protected function scanModels(): array
     {
         return collect(File::allFiles(app_path()))
-            ->map(fn($file) => $this->extractClass($file->getPathname()))
+            ->map(fn ($file) => $this->extractClass($file->getPathname()))
             ->filter()
-            ->filter(fn($class) => class_exists($class))
+            ->filter(fn ($class) => class_exists($class))
             ->values()
             ->all();
     }
@@ -125,7 +125,7 @@ class GenerateFoundationSlugPaths extends Command
             return null;
         }
 
-        return $ns[1] . '\\' . $class[1];
+        return $ns[1].'\\'.$class[1];
     }
 
     /*

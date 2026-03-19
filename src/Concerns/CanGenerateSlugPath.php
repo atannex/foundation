@@ -28,7 +28,7 @@ trait CanGenerateSlugPath
 
         static::saved(function (Model $model): void {
             if ($model->wasChanged($model->slugPathRelevantColumns())) {
-                DB::afterCommit(fn() => $model->updateDescendants());
+                DB::afterCommit(fn () => $model->updateDescendants());
             }
         });
     }
@@ -83,12 +83,13 @@ trait CanGenerateSlugPath
 
         $slug = $this->{$cfg['slug']} ?? null;
 
-        if (!is_string($slug) || $slug === '') {
+        if (! is_string($slug) || $slug === '') {
             throw new RuntimeException('Slug is required for slug path generation.');
         }
 
         if (! $this->{$cfg['parent']}) {
             $this->{$cfg['path']} = $slug;
+
             return;
         }
 
@@ -96,13 +97,14 @@ trait CanGenerateSlugPath
 
         if (! $parent) {
             $this->{$cfg['path']} = $slug;
+
             return;
         }
 
         $base = $parent->{$cfg['path']} ?? $parent->{$cfg['slug']};
 
         $this->{$cfg['path']} = trim(
-            $base . $cfg['separator'] . $slug,
+            $base.$cfg['separator'].$slug,
             $cfg['separator']
         );
     }
@@ -121,7 +123,7 @@ trait CanGenerateSlugPath
         |-----------------------------------------
         */
 
-        if (!empty($cfg['parent'])) {
+        if (! empty($cfg['parent'])) {
             $parent = $this->getParentForPath();
 
             if ($parent) {
@@ -138,10 +140,10 @@ trait CanGenerateSlugPath
         | Example: category.slug_path
         */
 
-        if (!empty($cfg['context'])) {
+        if (! empty($cfg['context'])) {
             $contextValue = $this->resolveDotValue($cfg['context']);
 
-            if (!empty($contextValue)) {
+            if (! empty($contextValue)) {
                 return $contextValue;
             }
         }
@@ -228,7 +230,7 @@ trait CanGenerateSlugPath
     {
         $cfg = $this->resolveSlugPathConfig();
 
-        if (!$this->relationLoaded('parent') && $this->{$cfg['parent']} === null) {
+        if (! $this->relationLoaded('parent') && $this->{$cfg['parent']} === null) {
             return null;
         }
 
