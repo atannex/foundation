@@ -49,11 +49,11 @@ trait CanGenerateSlug
     public function resolveSlugConfig(): array
     {
         return [
-            'column'    => $this->getSlugColumn(),
-            'source'    => $this->getSlugSource(),
-            'mode'      => $this->getSlugMode(),
+            'column' => $this->getSlugColumn(),
+            'source' => $this->getSlugSource(),
+            'mode' => $this->getSlugMode(),
             'separator' => $this->getSlugSeparator(),
-            'max'       => $this->getSlugMaxAttempts(),
+            'max' => $this->getSlugMaxAttempts(),
         ];
     }
 
@@ -71,7 +71,7 @@ trait CanGenerateSlug
 
         if ($slug === '') {
             throw new RuntimeException(
-                static::class . ' cannot generate slug: empty source.'
+                static::class.' cannot generate slug: empty source.'
             );
         }
 
@@ -118,8 +118,8 @@ trait CanGenerateSlug
             'random' => $this->randomId(),
 
             'mixed' => $this->wordSlug($config)
-                . $config['separator']
-                . $this->randomId(),
+                .$config['separator']
+                .$this->randomId(),
 
             default => $this->wordSlug($config),
         };
@@ -144,7 +144,7 @@ trait CanGenerateSlug
     {
         if (is_array($source)) {
             return collect($source)
-                ->map(fn($field) => $this->resolveDotValue($field))
+                ->map(fn ($field) => $this->resolveDotValue($field))
                 ->filter()
                 ->implode(' ');
         }
@@ -191,21 +191,21 @@ trait CanGenerateSlug
     protected function makeSlugUnique(string $slug, array $config): string
     {
         $base = $slug;
-        $sep  = $config['separator'];
-        $max  = $config['max'];
+        $sep = $config['separator'];
+        $max = $config['max'];
 
         for ($i = 0; $i <= $max; $i++) {
 
             $candidate = $i === 0
                 ? $base
-                : $base . $sep . $i;
+                : $base.$sep.$i;
 
             if (! $this->slugExists($candidate, $config['column'])) {
                 return $candidate;
             }
         }
 
-        return $base . $sep . $this->randomId(6);
+        return $base.$sep.$this->randomId(6);
     }
 
     protected function slugExists(string $slug, string $column): bool
