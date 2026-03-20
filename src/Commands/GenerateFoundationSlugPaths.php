@@ -27,6 +27,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found.');
+
             return self::SUCCESS;
         }
 
@@ -79,8 +80,8 @@ class GenerateFoundationSlugPaths extends Command
         $filter = $this->argument('model');
 
         $models = collect($this->scanModels())
-            ->filter(fn($class) => is_subclass_of($class, Model::class))
-            ->filter(fn($class) => in_array(
+            ->filter(fn ($class) => is_subclass_of($class, Model::class))
+            ->filter(fn ($class) => in_array(
                 CanGenerateSlugPath::class,
                 class_uses_recursive($class)
             ));
@@ -111,9 +112,9 @@ class GenerateFoundationSlugPaths extends Command
     protected function scanModels(): array
     {
         return collect(File::allFiles(app_path()))
-            ->map(fn($file) => $this->extractClass($file->getPathname()))
+            ->map(fn ($file) => $this->extractClass($file->getPathname()))
             ->filter()
-            ->filter(fn($class) => class_exists($class))
+            ->filter(fn ($class) => class_exists($class))
             ->values()
             ->all();
     }
@@ -130,7 +131,7 @@ class GenerateFoundationSlugPaths extends Command
             return null;
         }
 
-        return $ns[1] . '\\' . $class[1];
+        return $ns[1].'\\'.$class[1];
     }
 
     /*
@@ -142,7 +143,7 @@ class GenerateFoundationSlugPaths extends Command
     protected function processModel(string $modelClass): int
     {
         /** @var Model&CanGenerateSlugPath $instance */
-        $instance = new $modelClass();
+        $instance = new $modelClass;
 
         if (method_exists($instance, 'hasHierarchy') && $instance->hasHierarchy()) {
             return $this->processHierarchicalModel($modelClass);
@@ -163,7 +164,7 @@ class GenerateFoundationSlugPaths extends Command
         $dryRun = (bool) $this->option('dry-run');
         $total = 0;
 
-        $instance = new $modelClass();
+        $instance = new $modelClass;
         $parentColumn = $instance->resolveSlugPathConfig()['parent'];
 
         // Start from ROOT nodes (prevents redundant recalculations)
@@ -256,6 +257,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($dryRun) {
             $this->line("[DRY RUN] {$model->getKey()} → {$updated}");
+
             return 1;
         }
 
@@ -273,7 +275,7 @@ class GenerateFoundationSlugPaths extends Command
     protected function logError(Model $model, Throwable $e): void
     {
         $this->error(
-            "Error [" . get_class($model) . " ID: {$model->getKey()}]: {$e->getMessage()}"
+            'Error ['.get_class($model)." ID: {$model->getKey()}]: {$e->getMessage()}"
         );
 
         if ($this->output->isVerbose()) {
