@@ -4,16 +4,15 @@ declare(strict_types=1);
 
 namespace Atannex\Foundation\Concerns;
 
-use Atannex\Foundation\Supports\ResolveDotValue;
+use Atannex\Foundation\Contracts\ValueResolver;
+use Atannex\Foundation\Supports\HasAttributeGenerator;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 trait CanGenerateSlugPath
 {
-    use ResolveDotValue;
+    use HasAttributeGenerator;
 
     /*
     |--------------------------------------------------------------------------
@@ -23,119 +22,72 @@ trait CanGenerateSlugPath
 
     protected static function bootCanGenerateSlugPath(): void
     {
-        static::saving(function (Model $model): void {
-            if ($model->shouldGenerateSlugPath()) {
-                $model->generateSlugPath();
-            }
-        });
+        static::saving(fn(Model $m) => $m->runGenerator());
 
-        static::saved(function (Model $model): void {
-            if ($model->shouldUpdateDescendants()) {
-                DB::afterCommit(fn () => $model->updateDescendants());
+        static::saved(function (Model $m): void {
+            if ($m->shouldUpdateDescendants()) {
+                DB::afterCommit(fn() => $m->updateDescendants());
             }
         });
     }
 
     /*
     |--------------------------------------------------------------------------
-    | CONFIG
+    | GENERATOR IMPLEMENTATION
     |--------------------------------------------------------------------------
     */
 
-    public function resolveSlugPathConfig(): array
+    protected function generatorConfig(): array
     {
         return [
             'slug' => $this->slugColumn ?? 'slug',
             'path' => $this->slugPathColumn ?? 'slug_path',
-
-            // IMPORTANT: optional (no default!)
             'parent' => $this->parentColumn ?? null,
-
-            // optional context (dot notation supported)
             'context' => $this->slugPathContext ?? null,
-
             'separator' => $this->slugPathSeparator ?? '/',
         ];
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | CAPABILITIES
-    |--------------------------------------------------------------------------
-    */
-
-    public function hasHierarchy(): bool
+    protected function shouldGenerate(): bool
     {
-        return ! empty($this->cfg('parent'));
+        return $this->isDirty(array_filter([
+            $this->slugColumn ?? 'slug',
+            $this->parentColumn ?? null,
+            $this->slugPathContext ?? null,
+        ]));
     }
 
-    public function hasContext(): bool
+    protected function generateValue(array $cfg): string
     {
-        return ! empty($this->cfg('context'));
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | RELATIONSHIPS (SAFE)
-    |--------------------------------------------------------------------------
-    */
-
-    public function parent(): BelongsTo
-    {
-        $parentColumn = $this->cfg('parent');
-
-        if (! $parentColumn) {
-            throw new RuntimeException('Parent relationship not configured.');
-        }
-
-        return $this->belongsTo(static::class, $parentColumn);
-    }
-
-    public function children(): HasMany
-    {
-        $parentColumn = $this->cfg('parent');
-
-        if (! $parentColumn) {
-            throw new RuntimeException('Children relationship not configured.');
-        }
-
-        return $this->hasMany(static::class, $parentColumn);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | CORE GENERATION
-    |--------------------------------------------------------------------------
-    */
-
-    public function generateSlugPath(): void
-    {
-        $cfg = $this->resolveSlugPathConfig();
-
         $slug = $this->{$cfg['slug']} ?? null;
 
-        if (! is_string($slug) || $slug === '') {
-            throw new RuntimeException('Slug is required for slug path generation.');
+        if (! $slug) {
+            throw new RuntimeException('Slug required for path.');
         }
 
         $base = $this->resolveBasePath($cfg);
 
-        $this->{$cfg['path']} = $base
-            ? trim($base.$cfg['separator'].$slug, $cfg['separator'])
+        return $base
+            ? trim($base . $cfg['separator'] . $slug, $cfg['separator'])
             : $slug;
+    }
+
+    protected function assignValue(mixed $value, array $cfg): void
+    {
+        $this->{$cfg['path']} = $value;
     }
 
     /*
     |--------------------------------------------------------------------------
-    | BASE PATH RESOLUTION (STRATEGY CORE)
+    | BASE PATH
     |--------------------------------------------------------------------------
     */
 
     protected function resolveBasePath(array $cfg): string
     {
-        // 1. HIERARCHY (TREE)
-        if ($this->hasHierarchy()) {
-            $parent = $this->getParentForPath();
+        // hierarchy
+        if (! empty($cfg['parent'])) {
+            $parent = $this->parent()->first();
 
             if ($parent) {
                 return $parent->{$cfg['path']}
@@ -144,129 +96,45 @@ trait CanGenerateSlugPath
             }
         }
 
-        // 2. CONTEXT (RELATION)
-        if ($this->hasContext()) {
-            $contextValue = $this->resolveDotValue($cfg['context']);
+        // context
+        if (! empty($cfg['context'])) {
+            $resolver = app(ValueResolver::class);
 
-            if (! empty($contextValue)) {
-                return $contextValue;
+            $context = $resolver->resolve($this, $cfg['context']);
+
+            if (! empty($context)) {
+                return (string) $context;
             }
         }
 
-        // 3. FALLBACK
         return '';
     }
 
     /*
     |--------------------------------------------------------------------------
-    | DESCENDANT UPDATES (SAFE + ASYNC-FRIENDLY)
+    | DESCENDANTS
     |--------------------------------------------------------------------------
     */
-
-    public function updateDescendants(): void
-    {
-        if (! $this->hasHierarchy()) {
-            return;
-        }
-
-        $this->guardAgainstCycles();
-
-        $this->loadMissing('children');
-
-        foreach ($this->children as $child) {
-            $child->generateSlugPath();
-
-            // Avoid event loops + improve performance
-            $child->saveQuietly();
-
-            $child->updateDescendants();
-        }
-    }
 
     protected function shouldUpdateDescendants(): bool
     {
-        return $this->hasHierarchy()
-            && $this->wasChanged($this->slugPathRelevantColumns());
+        return ! empty($this->parentColumn)
+            && $this->wasChanged([
+                $this->slugColumn ?? 'slug',
+                $this->slugPathColumn ?? 'slug_path',
+            ]);
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | GUARDS
-    |--------------------------------------------------------------------------
-    */
-
-    protected function guardAgainstCycles(): void
+    public function updateDescendants(): void
     {
-        if (! $this->hasHierarchy()) {
+        if (empty($this->parentColumn)) {
             return;
         }
 
-        $visited = [];
-        $current = $this;
-
-        while ($current) {
-            $key = $current->getKey();
-
-            if ($key && in_array($key, $visited, true)) {
-                throw new RuntimeException('Circular hierarchy detected.');
-            }
-
-            $visited[] = $key;
-            $current = $current->getParentForPath();
+        foreach ($this->children as $child) {
+            $child->runGenerator();
+            $child->saveQuietly();
+            $child->updateDescendants();
         }
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | RULES
-    |--------------------------------------------------------------------------
-    */
-
-    protected function shouldGenerateSlugPath(): bool
-    {
-        return $this->isDirty($this->slugPathRelevantColumns());
-    }
-
-    protected function slugPathRelevantColumns(): array
-    {
-        return array_values(array_filter([
-            $this->cfg('slug'),
-            $this->cfg('parent'),
-            $this->cfg('context'),
-        ]));
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | HELPERS
-    |--------------------------------------------------------------------------
-    */
-
-    protected function getParentForPath(): ?Model
-    {
-        if (! $this->hasHierarchy()) {
-            return null;
-        }
-
-        $parentColumn = $this->cfg('parent');
-
-        if (! $this->relationLoaded('parent') && $this->{$parentColumn} === null) {
-            return null;
-        }
-
-        return $this->parent()
-            ->withoutGlobalScopes()
-            ->select([
-                $this->getKeyName(),
-                $this->cfg('slug'),
-                $this->cfg('path'),
-                $parentColumn,
-            ])
-            ->first();
-    }
-
-    protected function cfg(string $key): mixed
-    {
-        return $this->resolveSlugPathConfig()[$key] ?? null;
     }
 }

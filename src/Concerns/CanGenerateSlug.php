@@ -4,15 +4,14 @@ declare(strict_types=1);
 
 namespace Atannex\Foundation\Concerns;
 
-use Atannex\Foundation\Supports\ResolveDotValue;
-use Illuminate\Database\Eloquent\Builder;
+use Atannex\Foundation\Contracts\ValueResolver;
+use Atannex\Foundation\Supports\HasAttributeGenerator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
-use RuntimeException;
 
 trait CanGenerateSlug
 {
-    use ResolveDotValue;
+    use HasAttributeGenerator;
 
     /*
     |--------------------------------------------------------------------------
@@ -22,96 +21,55 @@ trait CanGenerateSlug
 
     protected static function bootCanGenerateSlug(): void
     {
-        static::creating(function (Model $model): void {
-            $model->generateSlugIfMissing();
-        });
+        static::creating(fn(Model $m) => $m->runGenerator());
 
-        static::updating(function (Model $model): void {
-            if ($model->shouldRegenerateSlug()) {
-                $model->ensureSlug();
+        static::updating(function (Model $m): void {
+            if ($m->shouldGenerate()) {
+                $m->runGenerator();
             }
-        });
-
-        static::restoring(function (Model $model): void {
-            if ($model->shouldRegenerateSlugOnRestore()) {
-                $model->ensureSlug();
-            }
-        });
-
-        static::deleting(function (Model $model): void {
-            $model->handleSlugDeleting();
         });
     }
 
     /*
     |--------------------------------------------------------------------------
-    | PUBLIC API (SINGLE CONTRACT)
+    | GENERATOR IMPLEMENTATION
     |--------------------------------------------------------------------------
     */
 
-    public function resolveSlugConfig(): array
+    protected function generatorConfig(): array
     {
         return [
-            'column' => $this->getSlugColumn(),
-            'source' => $this->getSlugSource(),
-            'mode' => $this->getSlugMode(),
-            'separator' => $this->getSlugSeparator(),
-            'max' => $this->getSlugMaxAttempts(),
+            'column' => $this->slugColumn ?? 'slug',
+            'source' => $this->slugSource ?? 'title',
+            'mode' => $this->slugMode ?? 'word',
+            'separator' => $this->slugSeparator ?? '-',
+            'max' => $this->slugMaxAttempts ?? 50,
         ];
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | ENTRY POINTS
-    |--------------------------------------------------------------------------
-    */
-
-    public function ensureSlug(): void
+    protected function shouldGenerate(): bool
     {
-        $config = $this->resolveSlugConfig();
+        $column = $this->slugColumn ?? 'slug';
 
+        return empty($this->{$column})
+            || $this->isDirty((array) ($this->slugSource ?? 'title'));
+    }
+
+    protected function generateValue(array $config): string
+    {
         $slug = $this->buildSlug($config);
 
-        if ($slug === '') {
-            throw new RuntimeException(
-                static::class.' cannot generate slug: empty source.'
-            );
-        }
-
-        $this->{$config['column']} = $this->makeSlugUnique($slug, $config);
+        return $this->makeSlugUnique($slug, $config);
     }
 
-    protected function generateSlugIfMissing(): void
+    protected function assignValue(mixed $value, array $config): void
     {
-        $column = $this->getSlugColumn();
-
-        if (! empty($this->{$column})) {
-            return;
-        }
-
-        $this->ensureSlug();
+        $this->{$config['column']} = $value;
     }
 
     /*
     |--------------------------------------------------------------------------
-    | LIFECYCLE: SOFT DELETE AWARENESS
-    |--------------------------------------------------------------------------
-    */
-
-    protected function handleSlugDeleting(): void
-    {
-        // Safe default: do nothing
-        // Override if you want slug mutation on delete
-    }
-
-    protected function shouldRegenerateSlugOnRestore(): bool
-    {
-        return false;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | SLUG BUILDER
+    | BUILDING
     |--------------------------------------------------------------------------
     */
 
@@ -121,8 +79,8 @@ trait CanGenerateSlug
             'random' => $this->randomId(),
 
             'mixed' => $this->wordSlug($config)
-                .$config['separator']
-                .$this->randomId(),
+                . $config['separator']
+                . $this->randomId(),
 
             default => $this->wordSlug($config),
         };
@@ -130,34 +88,30 @@ trait CanGenerateSlug
 
     protected function wordSlug(array $config): string
     {
-        $value = trim($this->resolveSourceValue($config['source']));
+        $value = $this->resolveSourceValue($config['source']);
 
-        return $value === ''
-            ? ''
-            : Str::slug($value, $config['separator']);
+        return $value
+            ? Str::slug($value, $config['separator'])
+            : '';
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | SOURCE RESOLUTION (DOT NOTATION)
-    |--------------------------------------------------------------------------
-    */
 
     protected function resolveSourceValue(string|array $source): string
     {
+        $resolver = app(ValueResolver::class);
+
         if (is_array($source)) {
             return collect($source)
-                ->map(fn ($field) => $this->resolveDotValue($field))
+                ->map(fn($field) => $resolver->resolve($this, $field))
                 ->filter()
                 ->implode(' ');
         }
 
-        return $this->resolveDotValue($source);
+        return (string) $resolver->resolve($this, $source);
     }
 
     /*
     |--------------------------------------------------------------------------
-    | UNIQUENESS (INCLUDING SOFT DELETED)
+    | UNIQUENESS
     |--------------------------------------------------------------------------
     */
 
@@ -165,107 +119,31 @@ trait CanGenerateSlug
     {
         $base = $slug;
         $sep = $config['separator'];
-        $max = $config['max'];
 
-        for ($i = 0; $i <= $max; $i++) {
-
-            $candidate = $i === 0
-                ? $base
-                : $base.$sep.$i;
+        for ($i = 0; $i <= $config['max']; $i++) {
+            $candidate = $i === 0 ? $base : $base . $sep . $i;
 
             if (! $this->slugExists($candidate, $config['column'])) {
                 return $candidate;
             }
         }
 
-        return $base.$sep.$this->randomId(6);
+        return $base . $sep . $this->randomId(6);
     }
 
     protected function slugExists(string $slug, string $column): bool
     {
-        $query = $this->newSlugQuery()
-            ->where($column, $slug);
+        $query = $this->newQuery()->where($column, $slug);
 
-        // exclude current record when updating
         if ($this->exists) {
-            $query->where($this->getKeyName(), '!=', $this->getKey());
+            $query->whereKeyNot($this->getKey());
         }
 
-        return $this->applySlugConstraints($query)->exists();
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | QUERY HOOK (SOFT DELETE SUPPORT HERE)
-    |--------------------------------------------------------------------------
-    */
-
-    protected function newSlugQuery(): Builder
-    {
-        /** @var Model $this */
-        $query = $this->newQuery();
-
-        // IMPORTANT: include trashed records for uniqueness check
         if (method_exists($this, 'withTrashed')) {
             $query = $this->withTrashed();
         }
 
-        return $query;
-    }
-
-    protected function applySlugConstraints(Builder $query): Builder
-    {
-        if (method_exists($this, 'scopeSlugUniqueness')) {
-            return $this->scopeSlugUniqueness($query);
-        }
-
-        return $query;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | REGENERATION LOGIC
-    |--------------------------------------------------------------------------
-    */
-
-    protected function shouldRegenerateSlug(): bool
-    {
-        $source = $this->getSlugSource();
-
-        return is_array($source)
-            ? $this->isDirty($source)
-            : $this->isDirty([$source]);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | CONFIGURATION
-    |--------------------------------------------------------------------------
-    */
-
-    protected function getSlugColumn(): string
-    {
-        return $this->slugColumn ?? 'slug';
-    }
-
-    protected function getSlugSource(): string|array
-    {
-        return $this->slugSource ?? 'title';
-    }
-
-    protected function getSlugMode(): string
-    {
-        return $this->slugMode ?? 'word';
-    }
-
-    protected function getSlugSeparator(): string
-    {
-        return $this->slugSeparator ?? '-';
-    }
-
-    protected function getSlugMaxAttempts(): int
-    {
-        return $this->slugMaxAttempts ?? 50;
+        return $query->exists();
     }
 
     /*
