@@ -28,6 +28,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found.');
+
             return self::SUCCESS;
         }
 
@@ -65,7 +66,7 @@ class GenerateFoundationSlugPaths extends Command
                     try {
                         $this->processRecord($model, $dryRun);
                     } catch (Throwable $e) {
-                        $this->error("ID {$model->getKey()} failed: " . $e->getMessage());
+                        $this->error("ID {$model->getKey()} failed: ".$e->getMessage());
                     }
                 }
             });
@@ -96,6 +97,7 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($dryRun) {
             $this->line("[DRY RUN] {$model->getKey()} updated");
+
             return;
         }
 

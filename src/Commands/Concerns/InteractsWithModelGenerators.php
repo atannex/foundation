@@ -51,9 +51,9 @@ trait InteractsWithModelGenerators
 
     protected function getClassFromFile(string $path): ?string
     {
-        $relative = str_replace(app_path() . DIRECTORY_SEPARATOR, '', $path);
+        $relative = str_replace(app_path().DIRECTORY_SEPARATOR, '', $path);
 
-        return 'App\\' . str_replace(
+        return 'App\\'.str_replace(
             [DIRECTORY_SEPARATOR, '.php'],
             ['\\', ''],
             $relative

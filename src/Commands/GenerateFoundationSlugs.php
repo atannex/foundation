@@ -26,6 +26,7 @@ class GenerateFoundationSlugs extends Command
 
         if (empty($models)) {
             $this->warn('No models found.');
+
             return self::SUCCESS;
         }
 
@@ -79,7 +80,7 @@ class GenerateFoundationSlugs extends Command
                     $count++;
                 }
             } catch (Throwable $e) {
-                $this->error("ID {$model->getKey()} failed: " . $e->getMessage());
+                $this->error("ID {$model->getKey()} failed: ".$e->getMessage());
             }
         }
 
