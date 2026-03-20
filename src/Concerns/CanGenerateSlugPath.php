@@ -30,8 +30,8 @@ trait CanGenerateSlugPath
         });
 
         static::saved(function (Model $model): void {
-            if ($model->wasChanged($model->slugPathRelevantColumns())) {
-                DB::afterCommit(fn () => $model->updateDescendants());
+            if ($model->shouldUpdateDescendants()) {
+                DB::afterCommit(fn() => $model->updateDescendants());
             }
         });
     }
@@ -45,14 +45,14 @@ trait CanGenerateSlugPath
     public function resolveSlugPathConfig(): array
     {
         return [
-            'slug' => $this->slugColumn ?? 'slug',
-            'path' => $this->slugPathColumn ?? 'slug_path',
+            'slug'      => $this->slugColumn ?? 'slug',
+            'path'      => $this->slugPathColumn ?? 'slug_path',
 
-            // hierarchy (tree models)
-            'parent' => $this->parentColumn ?? 'parent_id',
+            // IMPORTANT: optional (no default!)
+            'parent'    => $this->parentColumn ?? null,
 
-            // context fallback (e.g. category.slug_path)
-            'context' => $this->slugPathContext ?? null,
+            // optional context (dot notation supported)
+            'context'   => $this->slugPathContext ?? null,
 
             'separator' => $this->slugPathSeparator ?? '/',
         ];
@@ -60,18 +60,46 @@ trait CanGenerateSlugPath
 
     /*
     |--------------------------------------------------------------------------
-    | RELATIONSHIPS
+    | CAPABILITIES
+    |--------------------------------------------------------------------------
+    */
+
+    public function hasHierarchy(): bool
+    {
+        return ! empty($this->cfg('parent'));
+    }
+
+    public function hasContext(): bool
+    {
+        return ! empty($this->cfg('context'));
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | RELATIONSHIPS (SAFE)
     |--------------------------------------------------------------------------
     */
 
     public function parent(): BelongsTo
     {
-        return $this->belongsTo(static::class, $this->cfg('parent'));
+        $parentColumn = $this->cfg('parent');
+
+        if (! $parentColumn) {
+            throw new RuntimeException('Parent relationship not configured.');
+        }
+
+        return $this->belongsTo(static::class, $parentColumn);
     }
 
     public function children(): HasMany
     {
-        return $this->hasMany(static::class, $this->cfg('parent'));
+        $parentColumn = $this->cfg('parent');
+
+        if (! $parentColumn) {
+            throw new RuntimeException('Children relationship not configured.');
+        }
+
+        return $this->hasMany(static::class, $parentColumn);
     }
 
     /*
@@ -90,43 +118,23 @@ trait CanGenerateSlugPath
             throw new RuntimeException('Slug is required for slug path generation.');
         }
 
-        if (! $this->{$cfg['parent']}) {
-            $this->{$cfg['path']} = $slug;
+        $base = $this->resolveBasePath($cfg);
 
-            return;
-        }
-
-        $parent = $this->getParentForPath();
-
-        if (! $parent) {
-            $this->{$cfg['path']} = $slug;
-
-            return;
-        }
-
-        $base = $parent->{$cfg['path']} ?? $parent->{$cfg['slug']};
-
-        $this->{$cfg['path']} = trim(
-            $base.$cfg['separator'].$slug,
-            $cfg['separator']
-        );
+        $this->{$cfg['path']} = $base
+            ? trim($base . $cfg['separator'] . $slug, $cfg['separator'])
+            : $slug;
     }
 
     /*
     |--------------------------------------------------------------------------
-    | BASE PATH RESOLUTION (IMPORTANT LOGIC)
+    | BASE PATH RESOLUTION (STRATEGY CORE)
     |--------------------------------------------------------------------------
     */
 
     protected function resolveBasePath(array $cfg): string
     {
-        /*
-        |-----------------------------------------
-        | 1. PARENT (HIERARCHICAL MODELS)
-        |-----------------------------------------
-        */
-
-        if (! empty($cfg['parent'])) {
+        // 1. HIERARCHY (TREE)
+        if ($this->hasHierarchy()) {
             $parent = $this->getParentForPath();
 
             if ($parent) {
@@ -136,14 +144,8 @@ trait CanGenerateSlugPath
             }
         }
 
-        /*
-        |-----------------------------------------
-        | 2. CONTEXT (RELATIONAL MODELS)
-        |-----------------------------------------
-        | Example: category.slug_path
-        */
-
-        if (! empty($cfg['context'])) {
+        // 2. CONTEXT (RELATION)
+        if ($this->hasContext()) {
             $contextValue = $this->resolveDotValue($cfg['context']);
 
             if (! empty($contextValue)) {
@@ -151,33 +153,40 @@ trait CanGenerateSlugPath
             }
         }
 
-        /*
-        |-----------------------------------------
-        | 3. FALLBACK (STANDALONE)
-        |-----------------------------------------
-        */
-
+        // 3. FALLBACK
         return '';
     }
 
     /*
     |--------------------------------------------------------------------------
-    | DESCENDANT UPDATES
+    | DESCENDANT UPDATES (SAFE + ASYNC-FRIENDLY)
     |--------------------------------------------------------------------------
     */
 
     public function updateDescendants(): void
     {
+        if (! $this->hasHierarchy()) {
+            return;
+        }
+
         $this->guardAgainstCycles();
 
         $this->loadMissing('children');
 
         foreach ($this->children as $child) {
             $child->generateSlugPath();
+
+            // Avoid event loops + improve performance
             $child->saveQuietly();
 
             $child->updateDescendants();
         }
+    }
+
+    protected function shouldUpdateDescendants(): bool
+    {
+        return $this->hasHierarchy()
+            && $this->wasChanged($this->slugPathRelevantColumns());
     }
 
     /*
@@ -188,6 +197,10 @@ trait CanGenerateSlugPath
 
     protected function guardAgainstCycles(): void
     {
+        if (! $this->hasHierarchy()) {
+            return;
+        }
+
         $visited = [];
         $current = $this;
 
@@ -216,11 +229,11 @@ trait CanGenerateSlugPath
 
     protected function slugPathRelevantColumns(): array
     {
-        return array_filter([
+        return array_values(array_filter([
             $this->cfg('slug'),
             $this->cfg('parent'),
-            $this->slugPathContext ?? null,
-        ]);
+            $this->cfg('context'),
+        ]));
     }
 
     /*
@@ -231,9 +244,13 @@ trait CanGenerateSlugPath
 
     protected function getParentForPath(): ?Model
     {
-        $cfg = $this->resolveSlugPathConfig();
+        if (! $this->hasHierarchy()) {
+            return null;
+        }
 
-        if (! $this->relationLoaded('parent') && $this->{$cfg['parent']} === null) {
+        $parentColumn = $this->cfg('parent');
+
+        if (! $this->relationLoaded('parent') && $this->{$parentColumn} === null) {
             return null;
         }
 
@@ -241,9 +258,9 @@ trait CanGenerateSlugPath
             ->withoutGlobalScopes()
             ->select([
                 $this->getKeyName(),
-                $cfg['slug'],
-                $cfg['path'],
-                $cfg['parent'],
+                $this->cfg('slug'),
+                $this->cfg('path'),
+                $parentColumn,
             ])
             ->first();
     }
