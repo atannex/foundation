@@ -61,7 +61,7 @@ final class DotValueResolver implements ValueResolver
 
         if ($strict) {
             throw new RuntimeException(
-                "Unable to resolve [{$key}] on model [" . get_class($model) . ']'
+                "Unable to resolve [{$key}] on model [".get_class($model).']'
             );
         }
 

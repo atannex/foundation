@@ -52,8 +52,8 @@ class FoundationServiceProvider extends PackageServiceProvider
         |--------------------------------------------------------------------------
         */
 
-        if (file_exists(__DIR__ . '/../helpers.php')) {
-            require_once __DIR__ . '/../helpers.php';
+        if (file_exists(__DIR__.'/../helpers.php')) {
+            require_once __DIR__.'/../helpers.php';
         }
     }
 }

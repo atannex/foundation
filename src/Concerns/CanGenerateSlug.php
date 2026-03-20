@@ -21,7 +21,7 @@ trait CanGenerateSlug
 
     protected static function bootCanGenerateSlug(): void
     {
-        static::creating(fn(Model $m) => $m->runGenerator());
+        static::creating(fn (Model $m) => $m->runGenerator());
 
         static::updating(function (Model $m): void {
             if ($m->shouldGenerate()) {
@@ -79,8 +79,8 @@ trait CanGenerateSlug
             'random' => $this->randomId(),
 
             'mixed' => $this->wordSlug($config)
-                . $config['separator']
-                . $this->randomId(),
+                .$config['separator']
+                .$this->randomId(),
 
             default => $this->wordSlug($config),
         };
@@ -101,7 +101,7 @@ trait CanGenerateSlug
 
         if (is_array($source)) {
             return collect($source)
-                ->map(fn($field) => $resolver->resolve($this, $field))
+                ->map(fn ($field) => $resolver->resolve($this, $field))
                 ->filter()
                 ->implode(' ');
         }
@@ -121,14 +121,14 @@ trait CanGenerateSlug
         $sep = $config['separator'];
 
         for ($i = 0; $i <= $config['max']; $i++) {
-            $candidate = $i === 0 ? $base : $base . $sep . $i;
+            $candidate = $i === 0 ? $base : $base.$sep.$i;
 
             if (! $this->slugExists($candidate, $config['column'])) {
                 return $candidate;
             }
         }
 
-        return $base . $sep . $this->randomId(6);
+        return $base.$sep.$this->randomId(6);
     }
 
     protected function slugExists(string $slug, string $column): bool

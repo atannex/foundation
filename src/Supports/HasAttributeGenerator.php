@@ -34,7 +34,7 @@ trait HasAttributeGenerator
 
         if ($this->isEmptyGeneratedValue($value)) {
             throw new RuntimeException(
-                static::class . ' generated an empty value.'
+                static::class.' generated an empty value.'
             );
         }
 

@@ -22,11 +22,11 @@ trait CanGenerateSlugPath
 
     protected static function bootCanGenerateSlugPath(): void
     {
-        static::saving(fn(Model $m) => $m->runGenerator());
+        static::saving(fn (Model $m) => $m->runGenerator());
 
         static::saved(function (Model $m): void {
             if ($m->shouldUpdateDescendants()) {
-                DB::afterCommit(fn() => $m->updateDescendants());
+                DB::afterCommit(fn () => $m->updateDescendants());
             }
         });
     }
@@ -68,7 +68,7 @@ trait CanGenerateSlugPath
         $base = $this->resolveBasePath($cfg);
 
         return $base
-            ? trim($base . $cfg['separator'] . $slug, $cfg['separator'])
+            ? trim($base.$cfg['separator'].$slug, $cfg['separator'])
             : $slug;
     }
 
