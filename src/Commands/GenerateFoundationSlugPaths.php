@@ -6,6 +6,7 @@ use Atannex\Foundation\Concerns\CanGenerateSlugPath;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Throwable;
@@ -26,7 +27,6 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($models->isEmpty()) {
             $this->warn('No models found.');
-
             return self::SUCCESS;
         }
 
@@ -79,8 +79,11 @@ class GenerateFoundationSlugPaths extends Command
         $filter = $this->argument('model');
 
         $models = collect($this->scanModels())
-            ->filter(fn ($class) => is_subclass_of($class, Model::class))
-            ->filter(fn ($class) => in_array(CanGenerateSlugPath::class, class_uses_recursive($class)));
+            ->filter(fn($class) => is_subclass_of($class, Model::class))
+            ->filter(fn($class) => in_array(
+                CanGenerateSlugPath::class,
+                class_uses_recursive($class)
+            ));
 
         if ($filter) {
             $filter = Str::of($filter)
@@ -102,15 +105,15 @@ class GenerateFoundationSlugPaths extends Command
             return collect([$filter]);
         }
 
-        return $models;
+        return $models->values();
     }
 
     protected function scanModels(): array
     {
         return collect(File::allFiles(app_path()))
-            ->map(fn ($file) => $this->extractClass($file->getPathname()))
+            ->map(fn($file) => $this->extractClass($file->getPathname()))
             ->filter()
-            ->filter(fn ($class) => class_exists($class))
+            ->filter(fn($class) => class_exists($class))
             ->values()
             ->all();
     }
@@ -127,34 +130,52 @@ class GenerateFoundationSlugPaths extends Command
             return null;
         }
 
-        return $ns[1].'\\'.$class[1];
+        return $ns[1] . '\\' . $class[1];
     }
 
     /*
     |--------------------------------------------------------------------------
-    | PROCESS MODEL
+    | PROCESS MODEL (CAPABILITY-AWARE)
     |--------------------------------------------------------------------------
     */
 
     protected function processModel(string $modelClass): int
     {
+        /** @var Model&CanGenerateSlugPath $instance */
+        $instance = new $modelClass();
+
+        if (method_exists($instance, 'hasHierarchy') && $instance->hasHierarchy()) {
+            return $this->processHierarchicalModel($modelClass);
+        }
+
+        return $this->processFlatModel($modelClass);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | HIERARCHICAL MODELS (ROOT-FIRST STRATEGY)
+    |--------------------------------------------------------------------------
+    */
+
+    protected function processHierarchicalModel(string $modelClass): int
+    {
         $chunkSize = (int) $this->option('chunk');
         $dryRun = (bool) $this->option('dry-run');
-
         $total = 0;
 
+        $instance = new $modelClass();
+        $parentColumn = $instance->resolveSlugPathConfig()['parent'];
+
+        // Start from ROOT nodes (prevents redundant recalculations)
         $modelClass::query()
-            ->chunkById($chunkSize, function ($models) use (&$total, $dryRun, $modelClass) {
+            ->whereNull($parentColumn)
+            ->chunkById($chunkSize, function ($roots) use (&$total, $dryRun) {
 
-                foreach ($models as $model) {
+                foreach ($roots as $root) {
                     try {
-                        $total += $this->processRecord($model, $dryRun);
+                        $total += $this->processTree($root, $dryRun);
                     } catch (Throwable $e) {
-                        $this->error("Error [{$modelClass} ID: {$model->getKey()}]: {$e->getMessage()}");
-
-                        if ($this->output->isVerbose()) {
-                            $this->line($e->getTraceAsString());
-                        }
+                        $this->logError($root, $e);
                     }
                 }
             });
@@ -162,9 +183,55 @@ class GenerateFoundationSlugPaths extends Command
         return $total;
     }
 
+    protected function processTree(Model $model, bool $dryRun): int
+    {
+        $count = 0;
+
+        DB::transaction(function () use ($model, $dryRun, &$count) {
+
+            $count += $this->processRecord($model, $dryRun);
+
+            if (! $dryRun && method_exists($model, 'updateDescendants')) {
+                $model->updateDescendants();
+            }
+        });
+
+        return $count;
+    }
+
     /*
     |--------------------------------------------------------------------------
-    | RECORD PROCESSING (TRAIT-AWARE)
+    | NON-HIERARCHICAL MODELS
+    |--------------------------------------------------------------------------
+    */
+
+    protected function processFlatModel(string $modelClass): int
+    {
+        $chunkSize = (int) $this->option('chunk');
+        $dryRun = (bool) $this->option('dry-run');
+
+        $total = 0;
+
+        $modelClass::query()
+            ->chunkById($chunkSize, function ($models) use (&$total, $dryRun) {
+
+                DB::transaction(function () use ($models, &$total, $dryRun) {
+                    foreach ($models as $model) {
+                        try {
+                            $total += $this->processRecord($model, $dryRun);
+                        } catch (Throwable $e) {
+                            $this->logError($model, $e);
+                        }
+                    }
+                });
+            });
+
+        return $total;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | RECORD PROCESSING
     |--------------------------------------------------------------------------
     */
 
@@ -179,7 +246,6 @@ class GenerateFoundationSlugPaths extends Command
 
         $original = $model->getAttribute($column);
 
-        // 🔥 CORE CALL (uses parent → context → fallback logic)
         $model->generateSlugPath();
 
         $updated = $model->getAttribute($column);
@@ -190,22 +256,28 @@ class GenerateFoundationSlugPaths extends Command
 
         if ($dryRun) {
             $this->line("[DRY RUN] {$model->getKey()} → {$updated}");
-
             return 1;
         }
 
         $model->saveQuietly();
 
-        /*
-        |--------------------------------------------------------------------------
-        | IMPORTANT: ONLY UPDATE DESCENDANTS IF MODEL IS HIERARCHICAL
-        |--------------------------------------------------------------------------
-        */
-
-        if (method_exists($model, 'updateDescendants')) {
-            $model->updateDescendants();
-        }
-
         return 1;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ERROR HANDLING
+    |--------------------------------------------------------------------------
+    */
+
+    protected function logError(Model $model, Throwable $e): void
+    {
+        $this->error(
+            "Error [" . get_class($model) . " ID: {$model->getKey()}]: {$e->getMessage()}"
+        );
+
+        if ($this->output->isVerbose()) {
+            $this->line($e->getTraceAsString());
+        }
     }
 }
